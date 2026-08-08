@@ -3,6 +3,7 @@
 use App\Http\Controllers\AIFormController;
 use App\Http\Controllers\FieldController;
 use App\Http\Controllers\FormController;
+use App\Http\Controllers\FormImportController;
 use App\Http\Controllers\PublicFormController;
 use App\Http\Controllers\SectionController;
 use Illuminate\Support\Facades\Route;
@@ -24,6 +25,11 @@ Route::middleware('auth')->scopeBindings()->group(function () {
     Route::post('/forms/{form}/ai/generate', [AIFormController::class, 'generate']);
     Route::get('/forms/{form}/ai/jobs/{aiJob}', [AIFormController::class, 'show']);
     Route::post('/forms/{form}/ai/jobs/{aiJob}/apply', [AIFormController::class, 'apply']);
+
+    Route::post('/forms/{form}/imports', [FormImportController::class, 'store']);
+    Route::get('/forms/{form}/imports/{formImport}', [FormImportController::class, 'show']);
+    Route::get('/forms/{form}/imports/{formImport}/preview', [FormImportController::class, 'preview']);
+    Route::post('/forms/{form}/imports/{formImport}/commit', [FormImportController::class, 'commit']);
 
     Route::post('/forms/{form}/sections/reorder', [SectionController::class, 'reorder']);
     Route::post('/forms/{form}/sections', [SectionController::class, 'store']);

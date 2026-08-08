@@ -18,7 +18,7 @@ return new class extends Migration
             $table->string('source_type');
             $table->string('original_filename');
             $table->string('file_path');
-            $table->string('status')->default('uploaded');
+            $table->string('status')->default('pending');
             $table->json('detected_structure')->nullable();
             $table->json('field_candidates')->nullable();
             $table->json('ambiguities')->nullable();

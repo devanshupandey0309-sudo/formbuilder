@@ -265,3 +265,143 @@ Use the existing `ai_jobs` table/model for AI prompt lifecycle, provider respons
 
 - API clients inspect AI progress through `ai_jobs` records.
 - Future async providers can populate `laravel_job_id` without changing the domain model.
+
+---
+
+## ADR-010: Staged import workflow
+
+**Context**
+
+DOCX/XLSX imports must not immediately mutate form structure. Owners need a preview/review step before committing imported fields.
+
+**Decision**
+
+Use the existing `form_imports` table with an explicit lifecycle:
+
+`pending` → `processing` → `preview_ready` → `committed`  
+or `failed`.
+
+Upload creates a `form_import`, parses the file, validates normalized output, and stores preview data without touching `forms`, `sections`, or `fields`. Commit is a separate authenticated operation.
+
+**Reasoning**
+
+- Matches the AI generate → apply pattern already established in Phase 5.
+- Gives owners a chance to inspect parsed content.
+- Keeps failed imports from partially modifying forms.
+
+**Alternatives considered**
+
+- Immediate import into form structure: rejected as too risky.
+- Creating a separate preview table: rejected; existing `preview_data` column is sufficient.
+
+**Consequences**
+
+- Import upload and commit are separate API calls.
+- Failed imports remain inspectable via `form_imports.error_message`.
+
+---
+
+## ADR-011: Parser abstraction for imports
+
+**Context**
+
+DOCX and XLSX require different parsing strategies but must feed the same downstream validation and commit workflow.
+
+**Decision**
+
+Define a `FormImportParser` contract with `parse(string $path): array`. Implement `DocxFormParser` and `XlsxFormParser` under `app/Services/Import/`. `FormImportService` selects the parser based on detected file type.
+
+**Reasoning**
+
+- Avoids duplicated orchestration logic.
+- Makes adding future formats (CSV, etc.) straightforward.
+- Keeps controllers and import service free from format-specific parsing details.
+
+**Alternatives considered**
+
+- One monolithic import parser class: rejected due to poor separation.
+- Parsing directly in the controller: rejected.
+
+**Consequences**
+
+- DOCX and XLSX each have focused parser classes and tests.
+- Parser failures surface as import `failed` records with readable errors.
+
+---
+
+## ADR-012: Canonical normalized import format
+
+**Context**
+
+Multiple import sources must converge on the same structure expected by validation and form apply logic.
+
+**Decision**
+
+Both parsers produce the same canonical structure:
+
+```json
+{
+  "title": "...",
+  "description": null,
+  "sections": [
+    {
+      "title": "...",
+      "description": null,
+      "fields": [
+        {
+          "key": "...",
+          "label": "...",
+          "type": "...",
+          "required": true,
+          "config": {}
+        }
+      ]
+    }
+  ]
+}
+```
+
+Validation reuses `AIOutputValidator`. Field types must match `FieldService::SUPPORTED_TYPES`.
+
+**Reasoning**
+
+- One validator and one apply path for AI and import outputs.
+- Stable field keys remain consistent with submission architecture.
+
+**Alternatives considered**
+
+- Separate import-only validation rules: rejected to avoid drift.
+- Persisting parser-specific structures directly: rejected.
+
+**Consequences**
+
+- Import preview data is compatible with existing form apply logic.
+- Parser authors must normalize rows/headings/tables into the canonical shape.
+
+---
+
+## ADR-013: Explicit import commit
+
+**Context**
+
+Even valid parsed imports should not become live form structure until the owner confirms.
+
+**Decision**
+
+Commit via `POST /api/forms/{form}/imports/{formImport}/commit` only when status is `preview_ready`. Commit uses `FormStructureApplyService` inside a transaction, replaces sections/fields, clears schema, sets form to `draft`, and marks the import `committed`.
+
+**Reasoning**
+
+- Preserves publish workflow control.
+- Reuses the same transactional structure-apply logic as AI apply.
+- Prevents partial imports through DB transactions.
+
+**Alternatives considered**
+
+- Auto-commit on successful upload: rejected.
+- Merge import into existing sections without replacement: deferred; current apply replaces structure for clarity.
+
+**Consequences**
+
+- Import commit is destructive to existing form structure, similar to AI apply.
+- Publishing still requires `FormService::publishForm()`.
