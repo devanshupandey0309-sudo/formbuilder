@@ -2,8 +2,14 @@
 
 use App\Http\Controllers\FieldController;
 use App\Http\Controllers\FormController;
+use App\Http\Controllers\PublicFormController;
 use App\Http\Controllers\SectionController;
 use Illuminate\Support\Facades\Route;
+
+Route::prefix('public')->group(function () {
+    Route::get('/forms/{slug}', [PublicFormController::class, 'show']);
+    Route::post('/forms/{slug}/submit', [PublicFormController::class, 'submit']);
+});
 
 Route::middleware('auth')->scopeBindings()->group(function () {
     Route::get('/forms', [FormController::class, 'index']);

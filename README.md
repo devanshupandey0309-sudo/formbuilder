@@ -1,58 +1,215 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# AI Form Builder
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+Laravel 11 application for building, publishing, and collecting responses from dynamic forms.
 
-## About Laravel
+## Stack
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+- Laravel 11.55.0
+- PHP 8.3
+- MySQL
+- Livewire 3
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+## Implemented Features
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+### Domain & persistence (Phase 1)
 
-## Learning Laravel
+- Forms, sections, fields, submissions, submission answers, AI jobs, and form imports
+- JSON schema storage on forms
+- Form versioning and soft deletes
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
+### Form builder API (Phases 2–3)
 
-In addition, [Laracasts](https://laracasts.com) contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+- Authenticated form CRUD
+- Section and field management (create, update, delete, reorder)
+- Schema compilation from ordered sections/fields
+- Publish / unpublish workflow
+- Owner-based authorization via `FormPolicy`
 
-You can also watch bite-sized lessons with real-world projects on [Laravel Learn](https://laravel.com/learn), where you will be guided through building a Laravel application from scratch while learning PHP fundamentals.
+### Public forms & submissions (Phase 4)
 
-## Agentic Development
+- Public retrieval of published forms by slug
+- Public submission endpoint with schema-driven validation
+- Submission persistence with form version and schema snapshot
+- Stable answer storage via `field_key`
 
-Laravel's predictable structure and conventions make it ideal for AI coding agents like Claude Code, Cursor, and GitHub Copilot. Install [Laravel Boost](https://laravel.com/docs/ai) to supercharge your AI workflow:
+## Project Structure
 
-```bash
-composer require laravel/boost --dev
-
-php artisan boost:install
+```
+app/
+├── Http/
+│   ├── Controllers/
+│   │   ├── FormController.php
+│   │   ├── SectionController.php
+│   │   ├── FieldController.php
+│   │   └── PublicFormController.php
+│   └── Requests/
+├── Models/
+├── Policies/
+└── Services/
+    ├── FormService.php
+    ├── SectionService.php
+    ├── FieldService.php
+    └── SubmissionService.php
+routes/
+└── api.php
+tests/
+└── Feature/
+    ├── Form/
+    ├── Section/
+    ├── Field/
+    └── PublicForm/
+docs/
+└── decisions.md
 ```
 
-Boost provides your agent 15+ tools and skills that help agents build Laravel applications while following best practices.
+## API Endpoints
 
-## Contributing
+### Authenticated (session auth required)
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+| Method | URI | Description |
+|---|---|---|
+| GET | `/api/forms` | List user's forms |
+| POST | `/api/forms` | Create form |
+| GET | `/api/forms/{form}` | Show form |
+| PUT | `/api/forms/{form}` | Update form |
+| DELETE | `/api/forms/{form}` | Delete form |
+| POST | `/api/forms/{form}/publish` | Publish form |
+| POST | `/api/forms/{form}/unpublish` | Unpublish form |
+| POST | `/api/forms/{form}/sections` | Create section |
+| PUT | `/api/forms/{form}/sections/{section}` | Update section |
+| DELETE | `/api/forms/{form}/sections/{section}` | Delete section |
+| POST | `/api/forms/{form}/sections/reorder` | Reorder sections |
+| POST | `/api/forms/{form}/sections/{section}/fields` | Create field |
+| PUT | `/api/forms/{form}/sections/{section}/fields/{field}` | Update field |
+| DELETE | `/api/forms/{form}/sections/{section}/fields/{field}` | Delete field |
+| POST | `/api/forms/{form}/sections/{section}/fields/reorder` | Reorder fields |
 
-## Code of Conduct
+### Public (no authentication)
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+| Method | URI | Description |
+|---|---|---|
+| GET | `/api/public/forms/{slug}` | Retrieve published form schema |
+| POST | `/api/public/forms/{slug}/submit` | Submit answers |
 
-## Security Vulnerabilities
+## Public Form Examples
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+### Retrieve a published form
+
+**Request**
+
+```
+GET /api/public/forms/contact-form
+```
+
+**Response**
+
+```json
+{
+  "success": true,
+  "message": "Form retrieved successfully.",
+  "data": {
+    "slug": "contact-form",
+    "title": "Contact Form",
+    "description": "Get in touch with us.",
+    "version": 1,
+    "published_at": "2026-08-08T10:00:00.000000Z",
+    "schema": {
+      "version": 1,
+      "title": "Contact Form",
+      "description": "Get in touch with us.",
+      "sections": [
+        {
+          "id": 1,
+          "title": "Contact Details",
+          "description": null,
+          "fields": [
+            {
+              "key": "full_name",
+              "type": "text",
+              "label": "Full Name",
+              "required": true,
+              "config": {},
+              "validation": {}
+            },
+            {
+              "key": "email",
+              "type": "email",
+              "label": "Email",
+              "required": true,
+              "config": {},
+              "validation": {}
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
+```
+
+Draft and unpublished forms return `404 Not Found`.
+
+### Submit a form
+
+**Request**
+
+```
+POST /api/public/forms/contact-form/submit
+Content-Type: application/json
+```
+
+```json
+{
+  "answers": {
+    "full_name": "John Doe",
+    "email": "john@example.com",
+    "age": 25
+  }
+}
+```
+
+**Success response**
+
+```json
+{
+  "success": true,
+  "message": "Submission created successfully.",
+  "data": {
+    "submission_id": 1
+  }
+}
+```
+
+**Validation error response**
+
+```json
+{
+  "success": false,
+  "message": "Submission validation failed.",
+  "data": {
+    "errors": {
+      "answers.email": ["The email field must be a valid email address."]
+    }
+  }
+}
+```
+
+Submissions are validated against the **published compiled schema** (`forms.schema`), not mutable draft field definitions.
+
+Supported field types: `text`, `textarea`, `number`, `email`, `date`, `select`, `radio`, `checkbox`.
+
+## Running Tests
+
+```bash
+php artisan test
+```
+
+Current suite: **76 tests passing**.
+
+## Documentation
+
+Architectural decisions are recorded in [`docs/decisions.md`](docs/decisions.md).
 
 ## License
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+MIT
