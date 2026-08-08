@@ -82,6 +82,48 @@ class FieldService
         });
     }
 
+    public function duplicateField(Field $field): Field
+    {
+        return DB::transaction(function () use ($field) {
+            $section = $field->section;
+            $form = $field->form;
+
+            $duplicate = $section->fields()->create([
+                'form_id' => $form->id,
+                'key' => $this->generateUniqueKey($form, $field->key),
+                'label' => $field->label.' (Copy)',
+                'type' => $field->type,
+                'sort_order' => ($section->fields()->max('sort_order') ?? -1) + 1,
+                'config' => $field->config,
+                'validation' => $field->validation,
+                'is_required' => $field->is_required,
+            ]);
+
+            $fieldIds = $section->fields()
+                ->orderBy('sort_order')
+                ->pluck('id')
+                ->all();
+
+            $orderedIds = [];
+
+            foreach ($fieldIds as $fieldId) {
+                if ($fieldId === $duplicate->id) {
+                    continue;
+                }
+
+                $orderedIds[] = $fieldId;
+
+                if ($fieldId === $field->id) {
+                    $orderedIds[] = $duplicate->id;
+                }
+            }
+
+            $this->reorderFields($section, $orderedIds);
+
+            return $duplicate->fresh();
+        });
+    }
+
     /**
      * @param  list<int>  $fieldIds
      */
@@ -156,5 +198,18 @@ class FieldService
         if ($form->schema !== null) {
             $form->update(['schema' => null]);
         }
+    }
+
+    private function generateUniqueKey(Form $form, string $baseKey): string
+    {
+        $candidate = $baseKey.'_copy';
+        $counter = 2;
+
+        while ($form->fields()->where('key', $candidate)->exists()) {
+            $candidate = $baseKey.'_copy_'.$counter;
+            $counter++;
+        }
+
+        return $candidate;
     }
 }

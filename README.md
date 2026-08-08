@@ -49,6 +49,26 @@ Laravel 11 application for building, publishing, and collecting responses from d
 - Preview before commit — import does not modify form until explicitly committed
 - Reuses existing field-type validation and form structure apply logic
 
+### Livewire form builder UI (Phase 7)
+
+- Browser-based form builder for authenticated form owners
+- Section and field CRUD with inline editing
+- Drag-and-drop section/field reordering (SortableJS)
+- Field duplication with unique keys
+- Field configuration panel (required, placeholder, options, number min/max)
+- Two-way JSON editor synchronized with `FormService::compileSchema()`
+- Draft/publish workflow with unsaved-change indicators
+- Owner preview page and public slug-based form page
+- Server-side validation via existing services (`SubmissionService`, `FormService`)
+
+### Production-style AI architecture (Phase 8)
+
+- Async AI generation/editing via Laravel queue (`GenerateAIFormJob`)
+- FastAPI microservice (`ai-service/`) consumed over REST
+- AI edit support with current schema context
+- Livewire AI assistant panel with polling and explicit apply
+- Retry/backoff for transient provider failures; validation failures fail fast
+
 ## Project Structure
 
 ```
@@ -58,13 +78,13 @@ app/
 │   └── FormImportParser.php
 ├── Http/
 │   ├── Controllers/
-│   │   ├── AIFormController.php
-│   │   ├── FormController.php
-│   │   ├── FormImportController.php
-│   │   ├── SectionController.php
-│   │   ├── FieldController.php
-│   │   └── PublicFormController.php
 │   └── Requests/
+├── Livewire/
+│   └── Forms/
+│       ├── FormBuilder.php
+│       ├── FormIndex.php
+│       ├── FormPreview.php
+│       └── PublicForm.php
 ├── Models/
 ├── Policies/
 └── Services/
@@ -77,15 +97,23 @@ app/
     ├── AIFormApplyService.php
     ├── AIFormGenerationService.php
     ├── FormImportService.php
+    ├── FormSchemaValidator.php
     ├── FormStructureApplyService.php
     ├── FormService.php
     ├── SectionService.php
     ├── FieldService.php
     └── SubmissionService.php
 routes/
-└── api.php
+├── api.php
+└── web.php
+resources/
+├── js/
+│   ├── app.js
+│   └── form-builder.js
+└── views/livewire/forms/
 tests/
 ├── Feature/
+│   ├── Builder/
 │   ├── AI/
 │   ├── Import/
 │   ├── Form/
@@ -119,7 +147,8 @@ docs/
 | PUT | `/api/forms/{form}/sections/{section}/fields/{field}` | Update field |
 | DELETE | `/api/forms/{form}/sections/{section}/fields/{field}` | Delete field |
 | POST | `/api/forms/{form}/sections/{section}/fields/reorder` | Reorder fields |
-| POST | `/api/forms/{form}/ai/generate` | Generate form structure from prompt |
+| POST | `/api/forms/{form}/ai/generate` | Queue AI form generation from prompt |
+| POST | `/api/forms/{form}/ai/edit` | Queue AI edit of existing form schema |
 | GET | `/api/forms/{form}/ai/jobs/{aiJob}` | Retrieve AI job status/output |
 | POST | `/api/forms/{form}/ai/jobs/{aiJob}/apply` | Apply completed AI output to form |
 | POST | `/api/forms/{form}/imports` | Upload DOCX/XLSX import file |
@@ -243,19 +272,45 @@ Supported field types: `text`, `textarea`, `number`, `email`, `date`, `select`, 
 
 ## AI Form Generation
 
-AI generation converts a natural-language prompt into a structured draft form definition compatible with the existing section/field architecture.
+AI generation and editing convert natural-language prompts into structured draft form definitions compatible with the existing section/field architecture.
 
-### Workflow
+### Architecture
 
-1. Authenticated form owner sends a prompt to `POST /api/forms/{form}/ai/generate`.
-2. An `ai_jobs` record is created and processed synchronously.
-3. The configured `AIProvider` returns a structured form definition.
-4. Output is validated and normalized by `AIOutputValidator`.
-5. Raw and validated output are stored on the AI job.
-6. The client inspects the generated preview via the job response or `GET /api/forms/{form}/ai/jobs/{aiJob}`.
+```
+Client / Livewire Builder
+        |
+        v
+Laravel API (auth, ai_jobs lifecycle, validation, apply)
+        |
+        | REST POST /generate-form
+        v
+FastAPI AI service (provider abstraction)
+        |
+        v
+AI provider (mock by default)
+```
+
+- **`ai_jobs`** — domain-level AI workflow records (`pending` → `processing` → `completed` / `failed`)
+- **`jobs` (Laravel queue table)** — infrastructure queue payloads only
+- Laravel **`AIOutputValidator`** remains authoritative; malformed AI output never mutates forms
+- AI proposes changes; the owner must explicitly **Apply**
+
+### Async workflow
+
+1. Authenticated form owner sends a prompt to `POST /api/forms/{form}/ai/generate` or `POST /api/forms/{form}/ai/edit`.
+2. Laravel creates an `ai_jobs` record with status `pending` and dispatches `GenerateAIFormJob`.
+3. The HTTP response returns immediately (`202 Accepted`) with the pending job.
+4. A queue worker processes the job, calls the configured `AIProvider` (HTTP → FastAPI by default in production-style setups).
+5. Output is validated by `AIOutputValidator` and stored on the AI job.
+6. The client polls `GET /api/forms/{form}/ai/jobs/{aiJob}` (Livewire builder polls every 2s while pending/processing).
 7. To commit the structure, the owner calls `POST /api/forms/{form}/ai/jobs/{aiJob}/apply`.
 
-Generation does **not** auto-publish. Applying sets the form to `draft`, replaces sections/fields transactionally, and clears stale schema.
+Generation/editing does **not** auto-publish. Applying sets the form to `draft`, replaces sections/fields transactionally via `FormStructureApplyService`, and clears stale schema.
+
+### Retry behavior
+
+- Transient FastAPI/network failures throw `TransientAIServiceException` and are retried by Laravel (3 attempts, backoff 5/15/30 seconds).
+- Validation failures mark the AI job `failed` immediately and are **not** retried.
 
 ### Generate form structure
 
@@ -272,49 +327,70 @@ Content-Type: application/json
 }
 ```
 
-**Success response**
+**Queued response (`202 Accepted`)**
 
 ```json
 {
   "success": true,
-  "message": "AI form generation completed successfully.",
+  "message": "AI form generation queued successfully.",
+  "data": {
+    "ai_job": {
+      "id": 1,
+      "status": "pending",
+      "type": "generate",
+      "prompt": "Create an employee onboarding form..."
+    },
+    "generated_form": null
+  }
+}
+```
+
+Poll the job until `status` is `completed` or `failed`.
+
+### Edit existing form
+
+**Request**
+
+```
+POST /api/forms/{form}/ai/edit
+Content-Type: application/json
+```
+
+```json
+{
+  "prompt": "Make phone number required"
+}
+```
+
+Laravel sends the current compiled schema to FastAPI as `current_schema` with `operation=edit`. The AI returns a proposed **complete** schema stored in `validated_output`. The live form is unchanged until Apply.
+
+### Completed job response
+
+```json
+{
+  "success": true,
+  "message": "AI job retrieved successfully.",
   "data": {
     "ai_job": {
       "id": 1,
       "status": "completed",
-      "prompt": "Create an employee onboarding form...",
-      "raw_output": { "...": "..." },
-      "validated_output": { "...": "..." }
+      "type": "generate",
+      "attempt_count": 1
     },
     "generated_form": {
       "title": "Employee Onboarding Form",
-      "description": "Employee onboarding information",
-      "sections": [
-        {
-          "title": "Personal Information",
-          "description": null,
-          "fields": [
-            {
-              "key": "full_name",
-              "label": "Full Name",
-              "type": "text",
-              "required": true,
-              "config": {}
-            }
-          ]
-        }
-      ]
+      "sections": []
     }
   }
 }
 ```
 
-**Failure response**
+**Failure response (job status `failed`)**
 
 ```json
 {
-  "success": false,
-  "message": "AI form generation failed.",
+  "success": true,
+  "message": "AI job retrieved successfully.",
   "data": {
     "ai_job": {
       "id": 1,
@@ -326,7 +402,7 @@ Content-Type: application/json
 }
 ```
 
-### Apply generated form
+### Apply generated/edited form
 
 **Request**
 
@@ -334,23 +410,46 @@ Content-Type: application/json
 POST /api/forms/{form}/ai/jobs/{aiJob}/apply
 ```
 
-**Success response**
+Only `completed` jobs with validated output can be applied.
 
-```json
-{
-  "success": true,
-  "message": "Generated form applied successfully.",
-  "data": {
-    "id": 1,
-    "title": "Employee Onboarding Form",
-    "status": "draft",
-    "schema": null,
-    "sections": []
-  }
-}
+### Running the full AI stack locally
+
+**Terminal 1 — FastAPI**
+
+```bash
+cd ai-service
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8001
 ```
 
-Only `completed` jobs with validated output can be applied.
+Requires **Python 3.12** (see `ai-service/Dockerfile`). Use Docker if local Python differs.
+
+**Terminal 2 — Laravel queue worker**
+
+```bash
+php artisan queue:work
+```
+
+**Terminal 3 — Laravel app**
+
+```bash
+php artisan serve
+npm run dev
+```
+
+Set in `.env`:
+
+```env
+AI_PROVIDER_DRIVER=http
+AI_SERVICE_URL=http://127.0.0.1:8001
+QUEUE_CONNECTION=database
+```
+
+### Legacy synchronous note
+
+Phase 5 originally processed AI jobs synchronously in the HTTP request. Phase 8 queues all AI work; clients must poll job status.
 
 ## DOCX/XLSX Import
 
@@ -433,13 +532,69 @@ POST /api/forms/{form}/imports/{formImport}/commit
 
 Commit replaces the form's sections/fields, clears schema, and keeps the form in `draft`.
 
+## Livewire Form Builder
+
+### Web routes
+
+| Method | URI | Description |
+|---|---|---|
+| GET | `/forms` | List/create forms |
+| GET | `/forms/{form}/builder` | Visual + JSON builder |
+| GET | `/forms/{form}/preview` | Owner preview (draft or published) |
+| GET | `/f/{slug}` | Public published form |
+
+All builder routes require authentication and verified email. Authorization uses the existing `FormPolicy`.
+
+### Builder workflow
+
+1. Create a form from `/forms`.
+2. Open the builder to add/reorder sections and fields.
+3. Configure fields in the side panel (type, key, label, required, placeholder, options, validation).
+4. Switch to the **JSON** tab to inspect or edit the compiled schema representation.
+5. Click **Apply JSON** to sync valid JSON back into the builder. Invalid JSON is rejected with an error and does not mutate the form.
+6. Use **Preview** to render the current draft or published schema.
+7. Click **Publish** to compile schema and set the form live. Structure changes after publish clear cached schema until republished.
+
+The JSON editor uses the same structure as `FormService::compileSchema()`:
+
+```json
+{
+  "version": 1,
+  "title": "Contact Form",
+  "description": null,
+  "sections": [
+    {
+      "id": 1,
+      "title": "Contact Details",
+      "description": null,
+      "fields": [
+        {
+          "key": "email",
+          "type": "email",
+          "label": "Email",
+          "required": true,
+          "config": {},
+          "validation": {}
+        }
+      ]
+    }
+  ]
+}
+```
+
+### Frontend dependency
+
+Drag-and-drop ordering uses [SortableJS](https://github.com/SortableJS/Sortable) (`sortablejs` npm package), initialized from `resources/js/form-builder.js`.
+
 ## Running Tests
 
 ```bash
 php artisan test
 ```
 
-Current suite: **114 tests passing**.
+Current suite: **155 Laravel tests passing (404 assertions)**.
+
+FastAPI service tests (`ai-service/tests/`, **4 tests**): run with Python 3.12 via `pytest` inside `ai-service/` or through the provided Dockerfile.
 
 ## Documentation
 

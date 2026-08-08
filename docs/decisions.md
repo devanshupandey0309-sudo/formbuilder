@@ -405,3 +405,169 @@ Commit via `POST /api/forms/{form}/imports/{formImport}/commit` only when status
 
 - Import commit is destructive to existing form structure, similar to AI apply.
 - Publishing still requires `FormService::publishForm()`.
+
+---
+
+## ADR-014: Livewire as the primary interactive builder UI
+
+**Context**
+
+Part A of the assignment requires a browser-based form builder with section/field editing, reordering, JSON synchronization, and publish workflow.
+
+**Decision**
+
+Implement the builder as Livewire 3 full-page components under `app/Livewire/Forms/`, using existing Blade/Tailwind Breeze styling. UI actions delegate to existing domain services rather than duplicating API controller logic in JavaScript.
+
+**Reasoning**
+
+- Livewire is already part of the stack (Breeze/Volt auth).
+- Server-side services remain the source of truth for validation and persistence.
+- Avoids building a separate SPA while still providing interactive editing.
+
+**Alternatives considered**
+
+- React/Vue SPA against REST API: rejected for scope and duplication.
+- Blade-only forms without Livewire: rejected due to poor interactivity for reorder/config workflows.
+
+**Consequences**
+
+- Builder features are testable with `Livewire::test()`.
+- UI state changes round-trip through PHP services and policies.
+
+---
+
+## ADR-015: Single schema representation between visual builder and JSON editor
+
+**Context**
+
+The assignment requires a JSON editor with two-way synchronization and forbids maintaining unrelated schema formats.
+
+**Decision**
+
+The JSON editor displays and accepts the compiled schema shape produced by `FormService::compileSchema()`. Valid JSON edits are normalized by `FormSchemaValidator` and applied through `FormStructureApplyService`.
+
+**Reasoning**
+
+- Reuses the same schema used for publishing and public submissions.
+- Prevents drift between visual builder state and persisted JSON.
+- Invalid JSON is rejected before any structure mutation.
+
+**Alternatives considered**
+
+- Separate builder-only DTO/schema: rejected due to duplication.
+- Direct DB editing from JSON without validation: rejected as unsafe.
+
+**Consequences**
+
+- JSON apply replaces sections/fields transactionally (similar to AI/import apply).
+- Section `id` values in JSON are informational; apply recreates structure from titles/fields.
+- AI `validated_output` uses the same canonical section/field shape validated by `AIOutputValidator`.
+
+---
+
+## ADR-016: Server-side validation remains authoritative
+
+**Context**
+
+The builder UI collects submissions in preview/public pages and must not reimplement validation rules client-side.
+
+**Decision**
+
+Preview and public Livewire forms submit through `SubmissionService`, which validates against the published compiled schema. Draft preview renders from `compileSchema()` but blocks persistence until publish.
+
+**Reasoning**
+
+- Keeps one validation implementation aligned with Phase 4 public API behavior.
+- Prevents UI/backend rule drift for required fields, types, and option constraints.
+
+**Alternatives considered**
+
+- Client-only validation in Livewire views: rejected.
+- Separate Livewire validation layer: rejected as duplicate logic.
+
+**Consequences**
+
+- Public web form at `/f/{slug}` and API submission endpoint share validation semantics.
+- Draft preview displays schema but does not accept persisted submissions.
+
+---
+
+## ADR-017: Asynchronous AI generation using Laravel queue
+
+**Context**
+
+The assignment requires AI generation not to block HTTP requests on long-running provider calls.
+
+**Decision**
+
+`POST /api/forms/{form}/ai/generate` and `POST /api/forms/{form}/ai/edit` create an `ai_jobs` record in `pending` status and dispatch `GenerateAIFormJob`. The API returns `202 Accepted` immediately. Queue workers call `AIFormGenerationService::processJob()`.
+
+**Reasoning**
+
+- Prevents web request timeouts during provider latency.
+- Reuses Laravel's existing database queue infrastructure.
+- Keeps domain AI state in `ai_jobs` separate from Laravel's `jobs` table.
+
+**Alternatives considered**
+
+- Synchronous processing in controller: rejected (Phase 5 behavior).
+- Storing AI workflow only in Laravel queue payloads: rejected (poor API inspectability).
+
+**Consequences**
+
+- Clients and Livewire UI poll `GET /api/forms/{form}/ai/jobs/{aiJob}` for completion.
+- `php artisan queue:work` must run in environments using the database queue driver.
+
+---
+
+## ADR-018: FastAPI as isolated AI service
+
+**Context**
+
+The assignment requires a separate Python FastAPI service consumed by Laravel over REST.
+
+**Decision**
+
+Add `ai-service/` with `POST /generate-form`. Laravel's `HttpAIProvider` calls FastAPI when `AI_PROVIDER_DRIVER=http`. FastAPI keeps provider-specific logic isolated behind its own provider abstraction (mock by default).
+
+**Reasoning**
+
+- Separates AI/provider concerns from Laravel domain logic.
+- Allows independent scaling and provider swaps without changing form builder services.
+- Laravel retains auth, validation, persistence, and apply behavior.
+
+**Alternatives considered**
+
+- Embedding provider SDKs directly in Laravel: rejected for assignment architecture.
+- gRPC between services: rejected as unnecessary complexity.
+
+**Consequences**
+
+- Local/dev requires running FastAPI (`uvicorn`) plus a queue worker for end-to-end AI flows.
+- Tests use `Http::fake()` or the in-process `MockAIProvider`.
+
+---
+
+## ADR-019: AI proposes changes; explicit user apply required
+
+**Context**
+
+AI generation and editing must not silently mutate production form structure.
+
+**Decision**
+
+AI jobs store proposed structure in `validated_output`. Form sections/fields change only when the owner calls apply (`AIFormApplyService` → `FormStructureApplyService`). Livewire shows Apply/Discard actions for completed jobs.
+
+**Reasoning**
+
+- Matches staged import workflow (ADR-010) and explicit commit semantics.
+- Gives owners a review step before replacing structure.
+
+**Alternatives considered**
+
+- Auto-apply on successful AI completion: rejected as too risky.
+
+**Consequences**
+
+- Edit jobs receive current compiled schema as context but do not write it back until apply.
+- Failed/invalid AI output never touches `sections` / `fields`.

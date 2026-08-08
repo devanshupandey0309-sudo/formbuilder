@@ -39,7 +39,7 @@ class FormStructureApplyService
                         'type' => $fieldData['type'],
                         'sort_order' => $fieldIndex,
                         'config' => $fieldData['config'] ?? null,
-                        'validation' => null,
+                        'validation' => $fieldData['validation'] ?? null,
                         'is_required' => (bool) ($fieldData['required'] ?? false),
                     ]);
                 }
