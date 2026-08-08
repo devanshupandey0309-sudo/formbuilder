@@ -23,6 +23,7 @@ Route::middleware('auth')->scopeBindings()->group(function () {
     Route::post('/forms/{form}/unpublish', [FormController::class, 'unpublish']);
 
     Route::post('/forms/{form}/ai/generate', [AIFormController::class, 'generate']);
+    Route::post('/forms/{form}/ai/edit', [AIFormController::class, 'edit']);
     Route::get('/forms/{form}/ai/jobs/{aiJob}', [AIFormController::class, 'show']);
     Route::post('/forms/{form}/ai/jobs/{aiJob}/apply', [AIFormController::class, 'apply']);
 

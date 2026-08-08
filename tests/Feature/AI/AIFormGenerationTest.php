@@ -2,16 +2,20 @@
 
 namespace Tests\Feature\AI;
 
+use App\Jobs\GenerateAIFormJob;
 use App\Models\AIJob;
 use App\Models\Form;
 use App\Models\User;
 use App\Services\AI\MockAIProvider;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Queue;
 use RuntimeException;
+use Tests\Support\InteractsWithAiJobs;
 use Tests\TestCase;
 
 class AIFormGenerationTest extends TestCase
 {
+    use InteractsWithAiJobs;
     use RefreshDatabase;
 
     protected function setUp(): void
@@ -19,6 +23,7 @@ class AIFormGenerationTest extends TestCase
         parent::setUp();
 
         MockAIProvider::reset();
+        config(['ai.driver' => 'mock']);
     }
 
     protected function tearDown(): void
@@ -30,6 +35,8 @@ class AIFormGenerationTest extends TestCase
 
     public function test_authenticated_owner_can_generate(): void
     {
+        Queue::fake();
+
         $user = User::factory()->create();
         $form = Form::factory()->for($user)->create();
 
@@ -38,10 +45,14 @@ class AIFormGenerationTest extends TestCase
         ]);
 
         $response
-            ->assertCreated()
+            ->assertStatus(202)
             ->assertJsonPath('success', true)
-            ->assertJsonPath('data.ai_job.status', 'completed')
-            ->assertJsonPath('data.generated_form.title', 'Employee Onboarding Form');
+            ->assertJsonPath('data.ai_job.status', 'pending');
+
+        Queue::assertPushed(GenerateAIFormJob::class);
+        $this->processPushedAiJobs();
+
+        $this->assertSame('completed', AIJob::query()->value('status'));
     }
 
     public function test_unauthenticated_user_is_rejected(): void
@@ -66,22 +77,28 @@ class AIFormGenerationTest extends TestCase
 
     public function test_valid_prompt_is_accepted(): void
     {
+        Queue::fake();
+
         $user = User::factory()->create();
         $form = Form::factory()->for($user)->create();
 
         $this->actingAs($user)->postJson("/api/forms/{$form->id}/ai/generate", [
             'prompt' => 'Create a contact form with name and email fields.',
-        ])->assertCreated();
+        ])->assertStatus(202);
     }
 
     public function test_ai_job_is_created(): void
     {
+        Queue::fake();
+
         $user = User::factory()->create();
         $form = Form::factory()->for($user)->create();
 
         $this->actingAs($user)->postJson("/api/forms/{$form->id}/ai/generate", [
             'prompt' => 'Create an employee onboarding form with personal information.',
         ]);
+
+        $this->processPushedAiJobs();
 
         $this->assertDatabaseHas('ai_jobs', [
             'user_id' => $user->id,
@@ -96,11 +113,18 @@ class AIFormGenerationTest extends TestCase
         $user = User::factory()->create();
         $form = Form::factory()->for($user)->create();
 
-        $this->actingAs($user)->postJson("/api/forms/{$form->id}/ai/generate", [
+        $job = AIJob::create([
+            'user_id' => $user->id,
+            'form_id' => $form->id,
+            'type' => 'generate',
+            'status' => 'pending',
             'prompt' => 'Create an employee onboarding form with personal information.',
+            'input' => ['operation' => 'generate'],
         ]);
 
-        $job = AIJob::query()->first();
+        $this->processAiJob($job);
+
+        $job->refresh();
 
         $this->assertSame('completed', $job->status);
         $this->assertNotNull($job->started_at);
@@ -109,12 +133,16 @@ class AIFormGenerationTest extends TestCase
 
     public function test_raw_response_is_stored(): void
     {
+        Queue::fake();
+
         $user = User::factory()->create();
         $form = Form::factory()->for($user)->create();
 
         $this->actingAs($user)->postJson("/api/forms/{$form->id}/ai/generate", [
             'prompt' => 'Create an employee onboarding form with personal information.',
         ]);
+
+        $this->processPushedAiJobs();
 
         $job = AIJob::query()->first();
 
@@ -124,12 +152,16 @@ class AIFormGenerationTest extends TestCase
 
     public function test_validated_output_is_stored(): void
     {
+        Queue::fake();
+
         $user = User::factory()->create();
         $form = Form::factory()->for($user)->create();
 
         $this->actingAs($user)->postJson("/api/forms/{$form->id}/ai/generate", [
             'prompt' => 'Create an employee onboarding form with personal information.',
         ]);
+
+        $this->processPushedAiJobs();
 
         $job = AIJob::query()->first();
 
@@ -144,15 +176,19 @@ class AIFormGenerationTest extends TestCase
         $user = User::factory()->create();
         $form = Form::factory()->for($user)->create();
 
-        $response = $this->actingAs($user)->postJson("/api/forms/{$form->id}/ai/generate", [
+        $job = AIJob::create([
+            'user_id' => $user->id,
+            'form_id' => $form->id,
+            'type' => 'generate',
+            'status' => 'pending',
             'prompt' => 'Create an employee onboarding form with personal information.',
+            'input' => ['operation' => 'generate'],
         ]);
 
-        $response->assertUnprocessable();
+        $this->processAiJob($job);
 
-        $job = AIJob::query()->first();
-        $this->assertSame('failed', $job->status);
-        $this->assertNotNull($job->error_message);
+        $this->assertSame('failed', $job->fresh()->status);
+        $this->assertNotNull($job->fresh()->error_message);
     }
 
     public function test_unsupported_field_type_fails(): void
@@ -178,9 +214,18 @@ class AIFormGenerationTest extends TestCase
         $user = User::factory()->create();
         $form = Form::factory()->for($user)->create();
 
-        $this->actingAs($user)->postJson("/api/forms/{$form->id}/ai/generate", [
+        $job = AIJob::create([
+            'user_id' => $user->id,
+            'form_id' => $form->id,
+            'type' => 'generate',
+            'status' => 'pending',
             'prompt' => 'Create an employee onboarding form with personal information.',
-        ])->assertUnprocessable();
+            'input' => ['operation' => 'generate'],
+        ]);
+
+        $this->processAiJob($job);
+
+        $this->assertSame('failed', $job->fresh()->status);
     }
 
     public function test_duplicate_field_key_fails(): void
@@ -213,9 +258,18 @@ class AIFormGenerationTest extends TestCase
         $user = User::factory()->create();
         $form = Form::factory()->for($user)->create();
 
-        $this->actingAs($user)->postJson("/api/forms/{$form->id}/ai/generate", [
+        $job = AIJob::create([
+            'user_id' => $user->id,
+            'form_id' => $form->id,
+            'type' => 'generate',
+            'status' => 'pending',
             'prompt' => 'Create an employee onboarding form with personal information.',
-        ])->assertUnprocessable();
+            'input' => ['operation' => 'generate'],
+        ]);
+
+        $this->processAiJob($job);
+
+        $this->assertSame('failed', $job->fresh()->status);
     }
 
     public function test_missing_title_fails(): void
@@ -239,10 +293,11 @@ class AIFormGenerationTest extends TestCase
 
         $user = User::factory()->create();
         $form = Form::factory()->for($user)->create();
+        $job = $this->createPendingJob($user, $form);
 
-        $this->actingAs($user)->postJson("/api/forms/{$form->id}/ai/generate", [
-            'prompt' => 'Create an employee onboarding form with personal information.',
-        ])->assertUnprocessable();
+        $this->processAiJob($job);
+
+        $this->assertSame('failed', $job->fresh()->status);
     }
 
     public function test_missing_section_fails(): void
@@ -254,10 +309,11 @@ class AIFormGenerationTest extends TestCase
 
         $user = User::factory()->create();
         $form = Form::factory()->for($user)->create();
+        $job = $this->createPendingJob($user, $form);
 
-        $this->actingAs($user)->postJson("/api/forms/{$form->id}/ai/generate", [
-            'prompt' => 'Create an employee onboarding form with personal information.',
-        ])->assertUnprocessable();
+        $this->processAiJob($job);
+
+        $this->assertSame('failed', $job->fresh()->status);
     }
 
     public function test_missing_field_label_fails(): void
@@ -282,10 +338,11 @@ class AIFormGenerationTest extends TestCase
 
         $user = User::factory()->create();
         $form = Form::factory()->for($user)->create();
+        $job = $this->createPendingJob($user, $form);
 
-        $this->actingAs($user)->postJson("/api/forms/{$form->id}/ai/generate", [
-            'prompt' => 'Create an employee onboarding form with personal information.',
-        ])->assertUnprocessable();
+        $this->processAiJob($job);
+
+        $this->assertSame('failed', $job->fresh()->status);
     }
 
     public function test_invalid_options_fail(): void
@@ -310,10 +367,11 @@ class AIFormGenerationTest extends TestCase
 
         $user = User::factory()->create();
         $form = Form::factory()->for($user)->create();
+        $job = $this->createPendingJob($user, $form);
 
-        $this->actingAs($user)->postJson("/api/forms/{$form->id}/ai/generate", [
-            'prompt' => 'Create an employee onboarding form with personal information.',
-        ])->assertUnprocessable();
+        $this->processAiJob($job);
+
+        $this->assertSame('failed', $job->fresh()->status);
     }
 
     public function test_provider_exception_results_in_failed_job(): void
@@ -322,12 +380,23 @@ class AIFormGenerationTest extends TestCase
 
         $user = User::factory()->create();
         $form = Form::factory()->for($user)->create();
+        $job = $this->createPendingJob($user, $form);
 
-        $this->actingAs($user)->postJson("/api/forms/{$form->id}/ai/generate", [
-            'prompt' => 'Create an employee onboarding form with personal information.',
-        ])->assertUnprocessable();
+        $jobInstance = new GenerateAIFormJob($job->id);
 
-        $job = AIJob::query()->first();
+        try {
+            $jobInstance->handle(app(\App\Services\AIFormGenerationService::class));
+        } catch (\App\Exceptions\AI\TransientAIServiceException) {
+        }
+
+        try {
+            $jobInstance->handle(app(\App\Services\AIFormGenerationService::class));
+        } catch (\App\Exceptions\AI\TransientAIServiceException) {
+        }
+
+        $jobInstance->failed(new RuntimeException('Provider unavailable'));
+
+        $job->refresh();
 
         $this->assertSame('failed', $job->status);
         $this->assertSame('AI form generation failed.', $job->error_message);
@@ -348,9 +417,8 @@ class AIFormGenerationTest extends TestCase
             'sort_order' => 0,
         ]);
 
-        $this->actingAs($user)->postJson("/api/forms/{$form->id}/ai/generate", [
-            'prompt' => 'Create an employee onboarding form with personal information.',
-        ])->assertUnprocessable();
+        $job = $this->createPendingJob($user, $form);
+        $this->processAiJob($job);
 
         $this->assertDatabaseHas('fields', ['key' => 'existing_field']);
         $this->assertDatabaseCount('sections', 1);
@@ -358,12 +426,16 @@ class AIFormGenerationTest extends TestCase
 
     public function test_owner_can_retrieve_ai_job(): void
     {
+        Queue::fake();
+
         $user = User::factory()->create();
         $form = Form::factory()->for($user)->create();
 
         $this->actingAs($user)->postJson("/api/forms/{$form->id}/ai/generate", [
             'prompt' => 'Create an employee onboarding form with personal information.',
         ]);
+
+        $this->processPushedAiJobs();
 
         $job = AIJob::query()->first();
 
@@ -374,12 +446,16 @@ class AIFormGenerationTest extends TestCase
 
     public function test_completed_ai_job_can_be_applied(): void
     {
+        Queue::fake();
+
         $user = User::factory()->create();
         $form = Form::factory()->for($user)->create(['status' => 'published', 'schema' => ['version' => 1]]);
 
         $this->actingAs($user)->postJson("/api/forms/{$form->id}/ai/generate", [
             'prompt' => 'Create an employee onboarding form with personal information.',
         ]);
+
+        $this->processPushedAiJobs();
 
         $job = AIJob::query()->first();
 
@@ -404,12 +480,8 @@ class AIFormGenerationTest extends TestCase
 
         $user = User::factory()->create();
         $form = Form::factory()->for($user)->create();
-
-        $this->actingAs($user)->postJson("/api/forms/{$form->id}/ai/generate", [
-            'prompt' => 'Create an employee onboarding form with personal information.',
-        ]);
-
-        $job = AIJob::query()->first();
+        $job = $this->createPendingJob($user, $form);
+        $this->processAiJob($job);
 
         $this->actingAs($user)->postJson("/api/forms/{$form->id}/ai/jobs/{$job->id}/apply")
             ->assertUnprocessable();
@@ -445,27 +517,13 @@ class AIFormGenerationTest extends TestCase
             'sort_order' => 0,
         ]);
 
-        MockAIProvider::fake([
-            'title' => 'Broken Apply',
-            'sections' => [
-                [
-                    'title' => 'Main',
-                    'fields' => [
-                        [
-                            'key' => 'valid_field',
-                            'label' => 'Valid Field',
-                            'type' => 'text',
-                            'required' => true,
-                            'config' => [],
-                        ],
-                    ],
-                ],
-            ],
-        ]);
+        Queue::fake();
 
         $this->actingAs($user)->postJson("/api/forms/{$form->id}/ai/generate", [
             'prompt' => 'Create an employee onboarding form with personal information.',
         ]);
+
+        $this->processPushedAiJobs();
 
         $job = AIJob::query()->first();
 
@@ -479,5 +537,17 @@ class AIFormGenerationTest extends TestCase
 
         $this->assertDatabaseHas('fields', ['key' => 'existing_field']);
         $this->assertDatabaseCount('sections', 1);
+    }
+
+    private function createPendingJob(User $user, Form $form): AIJob
+    {
+        return AIJob::create([
+            'user_id' => $user->id,
+            'form_id' => $form->id,
+            'type' => 'generate',
+            'status' => 'pending',
+            'prompt' => 'Create an employee onboarding form with personal information.',
+            'input' => ['operation' => 'generate'],
+        ]);
     }
 }

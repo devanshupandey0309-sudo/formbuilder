@@ -3,10 +3,14 @@
 namespace App\Services;
 
 use App\Contracts\AIProvider;
+use App\Exceptions\AI\TransientAIServiceException;
+use App\Jobs\GenerateAIFormJob;
 use App\Models\AIJob;
 use App\Models\Form;
 use App\Models\User;
 use App\Services\AI\AIOutputValidator;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
 use Throwable;
 
 class AIFormGenerationService
@@ -14,22 +18,24 @@ class AIFormGenerationService
     public function __construct(
         private readonly AIProvider $provider,
         private readonly AIOutputValidator $validator,
+        private readonly FormService $formService,
     ) {}
 
-    public function generate(User $user, Form $form, string $prompt): AIJob
+    public function queueGenerate(User $user, Form $form, string $prompt): AIJob
     {
-        $aiJob = AIJob::create([
-            'user_id' => $user->id,
+        return $this->queueJob($user, $form, 'generate', $prompt, [
             'form_id' => $form->id,
-            'type' => 'generate',
-            'status' => 'pending',
-            'prompt' => $prompt,
-            'input' => [
-                'form_id' => $form->id,
-            ],
+            'operation' => 'generate',
         ]);
+    }
 
-        return $this->processJob($aiJob);
+    public function queueEdit(User $user, Form $form, string $prompt): AIJob
+    {
+        return $this->queueJob($user, $form, 'edit', $prompt, [
+            'form_id' => $form->id,
+            'operation' => 'edit',
+            'current_schema' => $this->formService->compileSchema($form),
+        ]);
     }
 
     public function getJob(Form $form, AIJob $aiJob): AIJob
@@ -41,18 +47,32 @@ class AIFormGenerationService
         return $aiJob;
     }
 
-    private function processJob(AIJob $aiJob): AIJob
+    public function processJob(AIJob $aiJob): void
     {
+        if (in_array($aiJob->status, ['completed', 'failed'], true)) {
+            return;
+        }
+
         $aiJob->update([
             'status' => 'processing',
-            'started_at' => now(),
+            'started_at' => $aiJob->started_at ?? now(),
             'attempt_count' => $aiJob->attempt_count + 1,
         ]);
 
         $rawOutput = null;
 
         try {
-            $rawOutput = $this->provider->generateForm($aiJob->prompt);
+            /** @var array<string, mixed> $input */
+            $input = $aiJob->input ?? [];
+            $operation = (string) ($input['operation'] ?? $aiJob->type);
+            $currentSchema = $input['current_schema'] ?? null;
+
+            $rawOutput = $this->provider->generateForm(
+                $aiJob->prompt,
+                is_array($currentSchema) ? $currentSchema : null,
+                $operation,
+            );
+
             $validatedOutput = $this->validator->validate($rawOutput);
 
             $aiJob->update([
@@ -62,7 +82,7 @@ class AIFormGenerationService
                 'error_message' => null,
                 'completed_at' => now(),
             ]);
-        } catch (Throwable $exception) {
+        } catch (ValidationException $exception) {
             $aiJob->update([
                 'status' => 'failed',
                 'raw_output' => is_array($rawOutput) ? $rawOutput : null,
@@ -70,9 +90,35 @@ class AIFormGenerationService
                 'error_message' => $this->resolveErrorMessage($exception),
                 'completed_at' => now(),
             ]);
-        }
+        } catch (TransientAIServiceException $exception) {
+            throw $exception;
+        } catch (Throwable $exception) {
+            Log::error('Unexpected AI job processing failure.', [
+                'ai_job_id' => $aiJob->id,
+                'message' => $exception->getMessage(),
+            ]);
 
-        return $aiJob->fresh();
+            throw new TransientAIServiceException('AI service is unavailable.', 0, $exception);
+        }
+    }
+
+    /**
+     * @param  array<string, mixed>  $input
+     */
+    private function queueJob(User $user, Form $form, string $type, string $prompt, array $input): AIJob
+    {
+        $aiJob = AIJob::create([
+            'user_id' => $user->id,
+            'form_id' => $form->id,
+            'type' => $type,
+            'status' => 'pending',
+            'prompt' => $prompt,
+            'input' => $input,
+        ]);
+
+        GenerateAIFormJob::dispatch($aiJob->id);
+
+        return $aiJob;
     }
 
     private function resolveErrorMessage(Throwable $exception): string

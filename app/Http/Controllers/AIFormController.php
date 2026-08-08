@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\EditFormAIRequest;
 use App\Http\Requests\GenerateFormAIRequest;
 use App\Models\AIJob;
 use App\Models\Form;
@@ -19,24 +20,31 @@ class AIFormController extends Controller
 
     public function generate(GenerateFormAIRequest $request, Form $form): JsonResponse
     {
-        $aiJob = $this->generationService->generate(
+        $aiJob = $this->generationService->queueGenerate(
             $request->user(),
             $form,
             $request->validated('prompt'),
         );
 
-        if ($aiJob->status === 'failed') {
-            return $this->error(
-                'AI form generation failed.',
-                422,
-                $this->formatJobResponse($aiJob),
-            );
-        }
+        return $this->success(
+            'AI form generation queued successfully.',
+            $this->formatJobResponse($aiJob),
+            202,
+        );
+    }
+
+    public function edit(EditFormAIRequest $request, Form $form): JsonResponse
+    {
+        $aiJob = $this->generationService->queueEdit(
+            $request->user(),
+            $form,
+            $request->validated('prompt'),
+        );
 
         return $this->success(
-            'AI form generation completed successfully.',
+            'AI form edit queued successfully.',
             $this->formatJobResponse($aiJob),
-            201,
+            202,
         );
     }
 
@@ -72,7 +80,18 @@ class AIFormController extends Controller
     private function formatJobResponse(AIJob $aiJob): array
     {
         return [
-            'ai_job' => $aiJob,
+            'ai_job' => [
+                'id' => $aiJob->id,
+                'form_id' => $aiJob->form_id,
+                'type' => $aiJob->type,
+                'status' => $aiJob->status,
+                'prompt' => $aiJob->prompt,
+                'error_message' => $aiJob->error_message,
+                'attempt_count' => $aiJob->attempt_count,
+                'started_at' => $aiJob->started_at,
+                'completed_at' => $aiJob->completed_at,
+                'created_at' => $aiJob->created_at,
+            ],
             'generated_form' => $aiJob->validated_output,
         ];
     }

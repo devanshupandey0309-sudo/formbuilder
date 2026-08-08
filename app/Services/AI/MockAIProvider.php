@@ -27,8 +27,15 @@ class MockAIProvider implements AIProvider
         self::$exception = null;
     }
 
-    public function generateForm(string $prompt): array
-    {
+    /**
+     * @param  array<string, mixed>|null  $currentSchema
+     * @return array<string, mixed>
+     */
+    public function generateForm(
+        string $prompt,
+        ?array $currentSchema = null,
+        string $operation = 'generate',
+    ): array {
         if (self::$exception !== null) {
             throw self::$exception;
         }
@@ -41,6 +48,91 @@ class MockAIProvider implements AIProvider
             throw new RuntimeException('Prompt cannot be empty.');
         }
 
+        if ($operation === 'edit' && is_array($currentSchema)) {
+            return $this->applyMockEdit($prompt, $currentSchema);
+        }
+
+        return $this->defaultGeneratedForm();
+    }
+
+    /**
+     * @param  array<string, mixed>  $currentSchema
+     * @return array<string, mixed>
+     */
+    private function applyMockEdit(string $prompt, array $currentSchema): array
+    {
+        $schema = $currentSchema;
+
+        if (stripos($prompt, 'emergency contact') !== false) {
+            $schema['sections'][] = [
+                'title' => 'Emergency Contact',
+                'description' => null,
+                'fields' => [
+                    [
+                        'key' => 'emergency_contact_name',
+                        'label' => 'Emergency Contact Name',
+                        'type' => 'text',
+                        'required' => true,
+                        'config' => [],
+                    ],
+                    [
+                        'key' => 'emergency_contact_phone',
+                        'label' => 'Emergency Contact Phone',
+                        'type' => 'text',
+                        'required' => true,
+                        'config' => [],
+                    ],
+                ],
+            ];
+        }
+
+        if (stripos($prompt, 'phone') !== false && stripos($prompt, 'required') !== false) {
+            foreach ($schema['sections'] as &$section) {
+                foreach ($section['fields'] as &$field) {
+                    if (($field['key'] ?? '') === 'phone' || str_contains(strtolower($field['label'] ?? ''), 'phone')) {
+                        $field['required'] = true;
+                    }
+                }
+            }
+            unset($section, $field);
+        }
+
+        if (stripos($prompt, 'date of birth') !== false) {
+            $schema['sections'][0]['fields'][] = [
+                'key' => 'date_of_birth',
+                'label' => 'Date of Birth',
+                'type' => 'date',
+                'required' => true,
+                'config' => [],
+            ];
+        }
+
+        if (stripos($prompt, 'consent') !== false) {
+            $schema['sections'][] = [
+                'title' => 'Consent',
+                'description' => null,
+                'fields' => [
+                    [
+                        'key' => 'consent',
+                        'label' => 'I agree to the terms',
+                        'type' => 'checkbox',
+                        'required' => true,
+                        'config' => [
+                            'options' => ['I agree'],
+                        ],
+                    ],
+                ],
+            ];
+        }
+
+        return $schema;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function defaultGeneratedForm(): array
+    {
         return [
             'title' => 'Employee Onboarding Form',
             'description' => 'Employee onboarding information',
@@ -61,6 +153,13 @@ class MockAIProvider implements AIProvider
                             'label' => 'Email',
                             'type' => 'email',
                             'required' => true,
+                            'config' => [],
+                        ],
+                        [
+                            'key' => 'phone',
+                            'label' => 'Phone Number',
+                            'type' => 'text',
+                            'required' => false,
                             'config' => [],
                         ],
                     ],
