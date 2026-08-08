@@ -69,6 +69,19 @@ Laravel 11 application for building, publishing, and collecting responses from d
 - Livewire AI assistant panel with polling and explicit apply
 - Retry/backoff for transient provider failures; validation failures fail fast
 
+### Autosave + draft recovery (Phase 9)
+
+- Debounced autosave (~1.5s) for form metadata, field editor, and JSON editor changes
+- Draft state persists in normalized `sections` / `fields` tables — no competing schema format
+- `forms.schema` remains the published snapshot; autosave never writes to it
+- Optimistic revision tracking via `draft_revision` + `draft_saved_at` on `forms`
+- Stale autosave requests rejected when a newer server draft exists
+- Livewire autosave indicator (`Saving…`, `Saved just now`, `Unsaved changes`, etc.)
+- Manual **Save Draft** button uses the same `FormDraftAutosaveService` path
+- Browser `localStorage` recovery with Restore / Discard prompt after refresh/crash
+- Relaxed draft validation (incomplete keys/labels allowed); publish validation unchanged
+- API: `PUT /api/forms/{form}/draft`
+
 ## Project Structure
 
 ```
@@ -97,6 +110,7 @@ app/
     ├── AIFormApplyService.php
     ├── AIFormGenerationService.php
     ├── FormImportService.php
+    ├── FormDraftAutosaveService.php
     ├── FormSchemaValidator.php
     ├── FormStructureApplyService.php
     ├── FormService.php
@@ -139,6 +153,7 @@ docs/
 | DELETE | `/api/forms/{form}` | Delete form |
 | POST | `/api/forms/{form}/publish` | Publish form |
 | POST | `/api/forms/{form}/unpublish` | Unpublish form |
+| PUT | `/api/forms/{form}/draft` | Autosave draft (metadata, field editor, optional JSON) |
 | POST | `/api/forms/{form}/sections` | Create section |
 | PUT | `/api/forms/{form}/sections/{section}` | Update section |
 | DELETE | `/api/forms/{form}/sections/{section}` | Delete section |
@@ -555,6 +570,67 @@ All builder routes require authentication and verified email. Authorization uses
 6. Use **Preview** to render the current draft or published schema.
 7. Click **Publish** to compile schema and set the form live. Structure changes after publish clear cached schema until republished.
 
+### Draft vs published schema
+
+| Layer | Storage | Purpose |
+|---|---|---|
+| **Draft builder state** | `sections` + `fields` tables (normalized) | Live editing; autosave target |
+| **Published schema** | `forms.schema` JSON | Public API contract; submission validation source |
+| **Draft revision** | `forms.draft_revision`, `forms.draft_saved_at` | Optimistic concurrency for autosave |
+
+Autosave updates draft tables and metadata only. It never sets `status = published`, never increments `forms.version`, and never writes compiled JSON into `forms.schema`. Publishing remains an explicit **Publish** action with full validation.
+
+### Autosave behavior
+
+- Form title, description, field editor fields, and JSON editor text trigger debounced autosave (~1.5s after the last change via `wire:model.live.debounce.1500ms`).
+- Structural actions (add/delete/reorder section or field) persist immediately through existing services and bump `draft_revision`.
+- The header shows autosave status: `Saving…`, `Saved just now`, `Unsaved changes`, `Save failed — retry`, or `Newer draft on server — refresh`.
+- **Save Draft** calls the same `FormDraftAutosaveService` as debounced autosave.
+- Incomplete drafts are allowed during editing (e.g. invalid field keys are ignored and the previous key is kept). Publish still enforces strict validation.
+
+**API autosave**
+
+```
+PUT /api/forms/{form}/draft
+```
+
+```json
+{
+  "draft_revision": 0,
+  "title": "My Form",
+  "description": "Optional",
+  "field_id": 12,
+  "field_editor": { "label": "Email", "key": "email", "type": "email" },
+  "json_editor": "{ ... }",
+  "apply_json": false
+}
+```
+
+When `apply_json` is `true` and the JSON passes `FormSchemaValidator`, structure is applied while preserving published status/version.
+
+### Draft recovery (browser)
+
+If the browser closes before autosave completes, a recovery snapshot is stored in `localStorage` under `form-builder-recovery:{formId}`.
+
+On builder load:
+
+1. Server draft loads normally.
+2. JavaScript compares the local snapshot timestamp with `draft_saved_at`.
+3. If local is newer, a **Restore / Discard** banner appears.
+4. **Restore** applies the snapshot and triggers autosave; **Discard** clears local storage.
+
+After a successful server autosave, the local snapshot is updated with the latest server revision.
+
+### Concurrency
+
+Each successful autosave increments `draft_revision`. Clients must send the revision they last received; stale requests return `422` on `draft_revision` and do not overwrite a newer draft.
+
+### Known limitations
+
+- Browser recovery requires JavaScript and `localStorage`; it is not covered by PHPUnit (server-side restore/discard is tested via Livewire).
+- Invalid JSON in the JSON tab is kept client-side until it validates or the user clicks **Apply JSON**.
+- Multi-tab editing: the revision check prevents silent overwrites; refresh when a conflict is shown.
+
 The JSON editor uses the same structure as `FormService::compileSchema()`:
 
 ```json
@@ -592,7 +668,7 @@ Drag-and-drop ordering uses [SortableJS](https://github.com/SortableJS/Sortable)
 php artisan test
 ```
 
-Current suite: **155 Laravel tests passing (404 assertions)**.
+Current suite: **169 Laravel tests passing (445 assertions)**.
 
 FastAPI service tests (`ai-service/tests/`, **4 tests**): run with Python 3.12 via `pytest` inside `ai-service/` or through the provided Dockerfile.
 

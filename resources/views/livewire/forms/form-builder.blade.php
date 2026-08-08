@@ -3,20 +3,79 @@
     $numberType = 'number';
 @endphp
 
-<div class="py-6" wire:loading.class="opacity-75" data-form-builder-root>
+<div class="py-6" wire:loading.class="opacity-75"
+    data-form-builder-root
+    data-form-id="{{ $form->id }}"
+    data-draft-revision="{{ $draftRevision }}"
+    data-draft-saved-at="{{ $lastSavedAt }}">
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-4">
+        @if ($recoveryOffer)
+            <div class="rounded-md border border-amber-300 bg-amber-50 p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <p class="text-sm text-amber-900">
+                    Unsaved changes from
+                    {{ \Illuminate\Support\Carbon::parse($recoveryOffer['timestamp'])->format('M j, g:i A') }}
+                    were found.
+                </p>
+                <div class="flex gap-2">
+                    <button type="button" wire:click="restoreRecovery"
+                        class="inline-flex items-center px-3 py-2 rounded-md text-sm font-medium text-white bg-amber-600 hover:bg-amber-700">
+                        Restore
+                    </button>
+                    <button type="button" wire:click="discardRecovery"
+                        class="inline-flex items-center px-3 py-2 rounded-md text-sm font-medium text-amber-900 bg-white border border-amber-300 hover:bg-amber-100">
+                        Discard
+                    </button>
+                </div>
+            </div>
+        @endif
+
         <div class="bg-white shadow-sm sm:rounded-lg p-4 sm:p-6">
             <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
                 <div class="flex-1">
                     <label for="form-title" class="sr-only">Form title</label>
-                    <input id="form-title" type="text" wire:model.blur="formTitle"
+                    <input id="form-title" type="text" wire:model.live.debounce.1500ms="formTitle"
                         class="w-full text-2xl font-semibold border-0 border-b border-transparent focus:border-indigo-500 focus:ring-0 px-0"
                         placeholder="Form title" />
-                    <textarea wire:model.blur="formDescription" rows="2" placeholder="Form description (optional)"
+                    <textarea wire:model.live.debounce.1500ms="formDescription" rows="2" placeholder="Form description (optional)"
                         class="mt-2 w-full text-sm text-gray-600 border-gray-200 rounded-md focus:border-indigo-500 focus:ring-indigo-500"></textarea>
                 </div>
 
                 <div class="flex flex-wrap items-center gap-2">
+                    <span @class([
+                        'inline-flex items-center rounded-full px-3 py-1 text-xs font-medium',
+                        'bg-gray-100 text-gray-700' => $autosaveStatus === 'saved',
+                        'bg-blue-100 text-blue-800' => $autosaveStatus === 'saving',
+                        'bg-yellow-100 text-yellow-800' => in_array($autosaveStatus, ['dirty', 'unsaved'], true),
+                        'bg-red-100 text-red-800' => in_array($autosaveStatus, ['failed', 'conflict'], true),
+                    ])>
+                        @switch($autosaveStatus)
+                            @case('saving')
+                                Saving...
+                                @break
+                            @case('dirty')
+                            @case('unsaved')
+                                Unsaved changes
+                                @break
+                            @case('failed')
+                                Save failed — retry
+                                @break
+                            @case('conflict')
+                                Newer draft on server — refresh
+                                @break
+                            @default
+                                @if ($lastSavedAt)
+                                    Saved {{ \Illuminate\Support\Carbon::parse($lastSavedAt)->diffForHumans() }}
+                                @else
+                                    All changes saved
+                                @endif
+                        @endswitch
+                    </span>
+
+                    <button type="button" wire:click="saveDraft" wire:loading.attr="disabled"
+                        wire:target="saveDraft,autosaveDraft"
+                        class="inline-flex items-center px-3 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50">
+                        Save Draft
+                    </button>
                     <span @class([
                         'inline-flex items-center rounded-full px-3 py-1 text-xs font-medium',
                         'bg-green-100 text-green-800' => $form->status === 'published' && ! $needsRepublish,
@@ -235,19 +294,19 @@
                             <form wire:submit="saveSelectedField" class="space-y-4">
                                 <div>
                                     <x-input-label for="field-label" value="Label" />
-                                    <x-text-input wire:model="fieldEditor.label" id="field-label" class="block mt-1 w-full" type="text" />
+                                    <x-text-input wire:model.live.debounce.1500ms="fieldEditor.label" id="field-label" class="block mt-1 w-full" type="text" />
                                     <x-input-error :messages="$errors->get('fieldEditor.label')" class="mt-2" />
                                 </div>
 
                                 <div>
                                     <x-input-label for="field-key" value="Key" />
-                                    <x-text-input wire:model="fieldEditor.key" id="field-key" class="block mt-1 w-full" type="text" />
+                                    <x-text-input wire:model.live.debounce.1500ms="fieldEditor.key" id="field-key" class="block mt-1 w-full" type="text" />
                                     <x-input-error :messages="$errors->get('fieldEditor.key')" class="mt-2" />
                                 </div>
 
                                 <div>
                                     <x-input-label for="field-type" value="Type" />
-                                    <select wire:model="fieldEditor.type" id="field-type"
+                                    <select wire:model.live.debounce.1500ms="fieldEditor.type" id="field-type"
                                         class="block mt-1 w-full border-gray-300 focus:border-indigo-500 focus:ring-indigo-500 rounded-md shadow-sm">
                                         @foreach ($supportedTypes as $type)
                                             <option value="{{ $type }}">{{ ucfirst($type) }}</option>
@@ -256,21 +315,21 @@
                                 </div>
 
                                 <label class="inline-flex items-center gap-2 text-sm text-gray-700">
-                                    <input type="checkbox" wire:model="fieldEditor.is_required" class="rounded border-gray-300 text-indigo-600 shadow-sm focus:ring-indigo-500">
+                                    <input type="checkbox" wire:model.live.debounce.1500ms="fieldEditor.is_required" class="rounded border-gray-300 text-indigo-600 shadow-sm focus:ring-indigo-500">
                                     Required
                                 </label>
 
                                 @if (in_array($fieldEditor['type'] ?? '', ['text', 'textarea', 'email', 'number'], true))
                                     <div>
                                         <x-input-label for="field-placeholder" value="Placeholder" />
-                                        <x-text-input wire:model="fieldEditor.placeholder" id="field-placeholder" class="block mt-1 w-full" type="text" />
+                                        <x-text-input wire:model.live.debounce.1500ms="fieldEditor.placeholder" id="field-placeholder" class="block mt-1 w-full" type="text" />
                                     </div>
                                 @endif
 
                                 @if (in_array($fieldEditor['type'] ?? '', $optionTypes, true))
                                     <div>
                                         <x-input-label for="field-options" value="Options (one per line)" />
-                                        <textarea wire:model="fieldEditor.optionsText" id="field-options" rows="5"
+                                        <textarea wire:model.live.debounce.1500ms="fieldEditor.optionsText" id="field-options" rows="5"
                                             class="block mt-1 w-full border-gray-300 focus:border-indigo-500 focus:ring-indigo-500 rounded-md shadow-sm"></textarea>
                                     </div>
                                 @endif
@@ -279,11 +338,11 @@
                                     <div class="grid grid-cols-2 gap-3">
                                         <div>
                                             <x-input-label for="field-min" value="Min" />
-                                            <x-text-input wire:model="fieldEditor.validation_min" id="field-min" class="block mt-1 w-full" type="number" />
+                                            <x-text-input wire:model.live.debounce.1500ms="fieldEditor.validation_min" id="field-min" class="block mt-1 w-full" type="number" />
                                         </div>
                                         <div>
                                             <x-input-label for="field-max" value="Max" />
-                                            <x-text-input wire:model="fieldEditor.validation_max" id="field-max" class="block mt-1 w-full" type="number" />
+                                            <x-text-input wire:model.live.debounce.1500ms="fieldEditor.validation_max" id="field-max" class="block mt-1 w-full" type="number" />
                                         </div>
                                     </div>
                                 @endif
@@ -301,7 +360,7 @@
                         Edit the compiled schema JSON below. Invalid JSON is rejected and will not modify the builder.
                     </p>
 
-                    <textarea wire:model="jsonEditor" rows="24"
+                    <textarea wire:model.live.debounce.1500ms="jsonEditor" rows="24"
                         class="w-full font-mono text-sm border-gray-300 focus:border-indigo-500 focus:ring-indigo-500 rounded-md shadow-sm"></textarea>
 
                     @if ($jsonError)

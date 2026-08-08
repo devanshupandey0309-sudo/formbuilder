@@ -571,3 +571,36 @@ AI jobs store proposed structure in `validated_output`. Form sections/fields cha
 
 - Edit jobs receive current compiled schema as context but do not write it back until apply.
 - Failed/invalid AI output never touches `sections` / `fields`.
+
+---
+
+## ADR-020: Draft revision autosave with client-side recovery
+
+**Context**
+
+The visual builder edits normalized `sections` / `fields` as draft state while `forms.schema` holds the published snapshot (ADR-001, ADR-015). Users need automatic draft persistence, protection against stale overwrites, and recovery after browser refresh without introducing a second schema format.
+
+**Decision**
+
+- Track draft saves with `draft_revision` (monotonic integer) and `draft_saved_at` on `forms`.
+- Route autosave through `FormDraftAutosaveService`, which updates draft tables/metadata only and rejects requests when `expected draft_revision` does not match the locked row.
+- Store in-progress browser state in `localStorage` for recovery; server remains authoritative after successful autosave.
+- Use relaxed validation for draft field saves; keep strict validation on publish.
+
+**Reasoning**
+
+- Reuses existing normalized draft storage instead of a parallel JSON draft column.
+- Optimistic revision checking is simpler than full CRDT/merge for this assignment scope.
+- Client recovery covers the gap between keystrokes and debounced server persistence.
+
+**Alternatives considered**
+
+- Separate `draft_schema` JSON column: rejected to avoid competing with `compileSchema()` (ADR-015).
+- Autosave on every keystroke without debounce: rejected to reduce database load.
+- Silent last-write-wins without revision checks: rejected for multi-tab safety.
+
+**Consequences**
+
+- Autosave never publishes or mutates `forms.version` / published `forms.schema`.
+- Stale autosave returns `422` with a `draft_revision` error.
+- Browser recovery is best-effort; PHPUnit covers server restore/discard paths.

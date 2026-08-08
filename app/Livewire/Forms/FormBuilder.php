@@ -10,6 +10,7 @@ use App\Services\AIFormApplyService;
 use App\Services\AIFormGenerationService;
 use App\Services\FieldService;
 use App\Services\FormSchemaValidator;
+use App\Services\FormDraftAutosaveService;
 use App\Services\FormService;
 use App\Services\FormStructureApplyService;
 use App\Services\SectionService;
@@ -59,21 +60,202 @@ class FormBuilder extends Component
 
     public ?string $aiProposedJson = null;
 
+    public int $draftRevision = 0;
+
+    public string $autosaveStatus = 'saved';
+
+    public ?string $lastSavedAt = null;
+
+    public bool $draftDirty = false;
+
+    /** @var array<string, mixed>|null */
+    public ?array $recoveryOffer = null;
+
+    private bool $isAutosaving = false;
+
+    private bool $dirtyDuringAutosave = false;
+
     public function mount(Form $form): void
     {
         $this->authorize('update', $form);
         $this->loadForm($form);
         $this->syncJsonFromForm(app(FormService::class));
+        $this->draftRevision = (int) $form->draft_revision;
+        $this->lastSavedAt = $form->draft_saved_at?->toIso8601String();
+        $this->autosaveStatus = 'saved';
+        $this->dispatchRecoveryContext();
     }
 
     public function updatedFormTitle(): void
     {
-        $this->saveFormMetadata();
+        $this->markDraftDirty();
+        $this->autosaveDraft();
     }
 
     public function updatedFormDescription(): void
     {
-        $this->saveFormMetadata();
+        $this->markDraftDirty();
+        $this->autosaveDraft();
+    }
+
+    public function updatedJsonEditor(): void
+    {
+        if ($this->activeTab !== 'json') {
+            return;
+        }
+
+        $this->markDraftDirty();
+        $this->autosaveDraft();
+    }
+
+    public function updated($property): void
+    {
+        if (str_starts_with($property, 'fieldEditor.')) {
+            $this->markDraftDirty();
+            $this->autosaveDraft();
+        }
+    }
+
+    public function autosaveDraft(): void
+    {
+        if ($this->isAutosaving) {
+            $this->dirtyDuringAutosave = true;
+
+            return;
+        }
+
+        if (! $this->draftDirty && $this->autosaveStatus === 'saved') {
+            return;
+        }
+
+        $this->isAutosaving = true;
+        $this->autosaveStatus = 'saving';
+
+        try {
+            $this->authorize('update', $this->form);
+
+            $form = app(FormDraftAutosaveService::class)->autosave(
+                $this->form,
+                $this->draftRevision,
+                $this->buildAutosavePayload(),
+            );
+
+            $this->draftRevision = (int) $form->draft_revision;
+            $this->lastSavedAt = $form->draft_saved_at?->toIso8601String();
+            $this->draftDirty = false;
+            $this->autosaveStatus = 'saved';
+            $this->loadForm($form);
+
+            if ($this->activeTab === 'json') {
+                // Keep the in-progress JSON editor text after autosave.
+            } else {
+                $this->syncJsonFromForm(app(FormService::class));
+            }
+
+            if ($this->selectedFieldId !== null) {
+                $this->selectField($this->selectedFieldId);
+            }
+
+            $this->dispatchDraftSaved();
+        } catch (ValidationException $exception) {
+            if ($exception->errors()['draft_revision'] ?? null) {
+                $this->autosaveStatus = 'conflict';
+            } else {
+                $this->autosaveStatus = 'failed';
+            }
+        } finally {
+            $this->isAutosaving = false;
+
+            if ($this->dirtyDuringAutosave) {
+                $this->dirtyDuringAutosave = false;
+                $this->draftDirty = true;
+                $this->autosaveDraft();
+            }
+        }
+    }
+
+    public function saveDraft(): void
+    {
+        $this->markDraftDirty();
+        $this->autosaveDraft();
+    }
+
+    /**
+     * @param  array<string, mixed>  $snapshot
+     */
+    public function offerRecovery(array $snapshot): void
+    {
+        if ((int) ($snapshot['formId'] ?? 0) !== $this->form->id) {
+            return;
+        }
+
+        $localTimestamp = strtotime((string) ($snapshot['timestamp'] ?? ''));
+        $serverTimestamp = $this->form->draft_saved_at?->getTimestamp() ?? 0;
+
+        if ($localTimestamp <= $serverTimestamp) {
+            $this->dispatch('draft-recovery-discard', formId: $this->form->id);
+
+            return;
+        }
+
+        $this->recoveryOffer = [
+            'timestamp' => $snapshot['timestamp'] ?? now()->toIso8601String(),
+            'snapshot' => $snapshot,
+        ];
+    }
+
+    public function restoreRecovery(
+        FormDraftAutosaveService $draftAutosaveService,
+        FormSchemaValidator $schemaValidator,
+        FormService $formService,
+    ): void {
+        if ($this->recoveryOffer === null) {
+            return;
+        }
+
+        /** @var array<string, mixed> $snapshot */
+        $snapshot = $this->recoveryOffer['snapshot'];
+
+        if (isset($snapshot['compiledSchema']) && is_array($snapshot['compiledSchema'])) {
+            try {
+                $validated = $schemaValidator->validateCompiledSchema($snapshot['compiledSchema']);
+                $draftAutosaveService->applyStructurePreservingPublication($this->form, $validated);
+            } catch (ValidationException) {
+                // Fall back to restoring only metadata/editor state below.
+            }
+        }
+
+        $this->formTitle = (string) ($snapshot['formTitle'] ?? $this->formTitle);
+        $this->formDescription = $snapshot['formDescription'] ?? $this->formDescription;
+        $this->jsonEditor = (string) ($snapshot['jsonEditor'] ?? $this->jsonEditor);
+        $this->activeTab = (string) ($snapshot['activeTab'] ?? $this->activeTab);
+        $this->selectedSectionId = isset($snapshot['selectedSectionId'])
+            ? (int) $snapshot['selectedSectionId']
+            : null;
+        $this->selectedFieldId = isset($snapshot['selectedFieldId'])
+            ? (int) $snapshot['selectedFieldId']
+            : null;
+        $this->fieldEditor = is_array($snapshot['fieldEditor'] ?? null)
+            ? $snapshot['fieldEditor']
+            : [];
+
+        app(FormService::class)->updateForm($this->form, [
+            'title' => $this->formTitle,
+            'description' => $this->formDescription,
+        ]);
+
+        $this->recoveryOffer = null;
+        $this->loadForm($this->form->fresh());
+        $this->syncJsonFromForm($formService);
+        $this->markDraftDirty();
+        $this->autosaveDraft();
+        $this->flashSuccess('Recovered unsaved changes.');
+    }
+
+    public function discardRecovery(): void
+    {
+        $this->recoveryOffer = null;
+        $this->dispatch('draft-recovery-discard', formId: $this->form->id);
     }
 
     public function setTab(string $tab): void
@@ -217,6 +399,7 @@ class FormBuilder extends Component
         $this->runBuilderAction(function () use ($field, $payload, $fieldService) {
             $fieldService->updateField($field, $payload);
             $this->selectField($field->id);
+            $this->recordDraftTouch();
             $this->flashSuccess('Field saved.');
         });
     }
@@ -390,21 +573,6 @@ class FormBuilder extends Component
         ]);
     }
 
-    private function saveFormMetadata(): void
-    {
-        $this->validate([
-            'formTitle' => ['required', 'string', 'max:255'],
-            'formDescription' => ['nullable', 'string', 'max:1000'],
-        ]);
-
-        app(FormService::class)->updateForm($this->form, [
-            'title' => $this->formTitle,
-            'description' => $this->formDescription,
-        ]);
-
-        $this->loadForm($this->form);
-    }
-
     /**
      * @param  callable(): void  $callback
      */
@@ -415,6 +583,7 @@ class FormBuilder extends Component
         try {
             $callback();
             $this->loadForm($this->form);
+            $this->recordDraftTouch();
 
             if ($refreshJson) {
                 $this->syncJsonFromForm(app(FormService::class));
@@ -425,6 +594,93 @@ class FormBuilder extends Component
         } finally {
             $this->isProcessing = false;
         }
+    }
+
+    private function markDraftDirty(): void
+    {
+        $this->draftDirty = true;
+
+        if ($this->autosaveStatus !== 'saving') {
+            $this->autosaveStatus = 'dirty';
+        }
+
+        $this->dispatch('draft-changed', snapshot: $this->buildRecoverySnapshot());
+    }
+
+    private function recordDraftTouch(): void
+    {
+        try {
+            $form = app(FormDraftAutosaveService::class)->touchDraft(
+                $this->form,
+                $this->draftRevision,
+            );
+
+            $this->draftRevision = (int) $form->draft_revision;
+            $this->lastSavedAt = $form->draft_saved_at?->toIso8601String();
+            $this->autosaveStatus = 'saved';
+            $this->draftDirty = false;
+            $this->dispatchDraftSaved();
+        } catch (ValidationException) {
+            $this->autosaveStatus = 'conflict';
+        }
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function buildAutosavePayload(): array
+    {
+        return [
+            'title' => $this->formTitle,
+            'description' => $this->formDescription,
+            'field_id' => $this->selectedFieldId,
+            'field_editor' => $this->fieldEditor !== [] ? $this->fieldEditor : null,
+            'json_editor' => $this->activeTab === 'json' ? $this->jsonEditor : null,
+            'apply_json' => $this->activeTab === 'json',
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function buildRecoverySnapshot(): array
+    {
+        $formService = app(FormService::class);
+
+        return [
+            'formId' => $this->form->id,
+            'timestamp' => now()->toIso8601String(),
+            'clientRevision' => $this->draftRevision,
+            'serverRevision' => $this->draftRevision,
+            'serverSavedAt' => $this->lastSavedAt,
+            'formTitle' => $this->formTitle,
+            'formDescription' => $this->formDescription,
+            'jsonEditor' => $this->jsonEditor,
+            'fieldEditor' => $this->fieldEditor,
+            'selectedFieldId' => $this->selectedFieldId,
+            'selectedSectionId' => $this->selectedSectionId,
+            'activeTab' => $this->activeTab,
+            'compiledSchema' => $formService->compileSchema($this->form),
+        ];
+    }
+
+    private function dispatchDraftSaved(): void
+    {
+        $this->dispatch('draft-saved', [
+            'formId' => $this->form->id,
+            'draftRevision' => $this->draftRevision,
+            'draftSavedAt' => $this->lastSavedAt,
+            'snapshot' => $this->buildRecoverySnapshot(),
+        ]);
+    }
+
+    private function dispatchRecoveryContext(): void
+    {
+        $this->dispatch('draft-recovery-check', [
+            'formId' => $this->form->id,
+            'draftRevision' => $this->draftRevision,
+            'draftSavedAt' => $this->lastSavedAt,
+        ]);
     }
 
     private function loadForm(Form $form): void

@@ -22,6 +22,8 @@ class Form extends Model
         'schema',
         'settings',
         'version',
+        'draft_revision',
+        'draft_saved_at',
         'published_at',
     ];
 
@@ -30,6 +32,7 @@ class Form extends Model
         return [
             'schema' => 'array',
             'settings' => 'array',
+            'draft_saved_at' => 'datetime',
             'published_at' => 'datetime',
         ];
     }
