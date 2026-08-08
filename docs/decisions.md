@@ -636,3 +636,34 @@ Form owners benefit from proactive feedback on structure, validation, and usabil
 - Health reflects current draft structure, not published `forms.schema`.
 - Info-level suggestions minimally affect score; errors and warnings drive deductions.
 - Large forms are analyzed synchronously in-process (no queue required for typical form sizes).
+
+---
+
+## ADR-022: Runtime database aggregation for submission insights
+
+**Context**
+
+Form owners need analytics on submissions (volume trends, field response rates, option distributions) without exposing raw answers or introducing synchronization complexity from cached statistics.
+
+**Decision**
+
+- Calculate insights on demand in `SubmissionInsightService` using SQL/Eloquent aggregation over normalized `submissions` and `submission_answers`.
+- Do **not** introduce a denormalized statistics/analytics table in Phase 11.
+- Return aggregated metrics and deterministic recommendations only; do not persist insight output.
+
+**Reasoning**
+
+- Keeps the initial architecture simple and always consistent with source data.
+- Avoids cache invalidation/sync problems when new submissions arrive or form structure changes.
+- Database aggregation (COUNT, GROUP BY, conditional SUM, MIN/MAX/AVG) scales better than loading all rows into PHP for typical form sizes.
+
+**Alternatives considered**
+
+- Denormalized stats table updated on each submission: deferred until measured performance requires it.
+- AI-generated insights: rejected for non-determinism and unnecessary coupling.
+
+**Consequences**
+
+- Insights are read-only and scoped by `FormPolicy::view`.
+- Checkbox distributions use MySQL `JSON_CONTAINS` per configured option.
+- A future optimization phase may add materialized statistics or indexes if profiling shows bottlenecks.

@@ -8,6 +8,7 @@ use App\Http\Controllers\FormHealthController;
 use App\Http\Controllers\FormImportController;
 use App\Http\Controllers\PublicFormController;
 use App\Http\Controllers\SectionController;
+use App\Http\Controllers\SubmissionInsightController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('public')->group(function () {
@@ -25,6 +26,7 @@ Route::middleware('auth')->scopeBindings()->group(function () {
     Route::post('/forms/{form}/unpublish', [FormController::class, 'unpublish']);
     Route::put('/forms/{form}/draft', [FormDraftController::class, 'store'])->name('forms.draft.store');
     Route::get('/forms/{form}/health', [FormHealthController::class, 'show']);
+    Route::get('/forms/{form}/insights', [SubmissionInsightController::class, 'show']);
 
     Route::post('/forms/{form}/ai/generate', [AIFormController::class, 'generate']);
     Route::post('/forms/{form}/ai/edit', [AIFormController::class, 'edit']);

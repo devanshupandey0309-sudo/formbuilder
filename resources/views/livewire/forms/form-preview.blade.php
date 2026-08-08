@@ -7,7 +7,9 @@
                     <p class="text-sm text-gray-600 mt-1">{{ $schema['description'] }}</p>
                 @endif
             </div>
-            <a href="{{ route('forms.builder', $form) }}" wire:navigate class="text-sm text-indigo-600 hover:text-indigo-800">Back to Builder</a>
+            <div class="flex flex-wrap items-center gap-2">
+                @include('livewire.forms.partials.form-nav', ['form' => $form, 'active' => 'preview'])
+            </div>
         </div>
 
         @if ($isDraftPreview)

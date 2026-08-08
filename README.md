@@ -91,6 +91,15 @@ Laravel 11 application for building, publishing, and collecting responses from d
 - Livewire builder panel + `GET /api/forms/{form}/health`
 - Original product idea beyond core assignment requirements — helps identify quality issues before publishing
 
+### Smart Submission Insights (Phase 11)
+
+- Aggregated submission analytics for form owners from normalized `submissions` / `submission_answers`
+- Runtime **database aggregation** (COUNT, GROUP BY, conditional SUM, MIN/MAX/AVG) — no denormalized stats table
+- Overview metrics, 30-day daily trend, field-level response rates, option distributions, numeric summaries
+- Deterministic rule-based recommendations (`success`, `warning`, `info`)
+- API: `GET /api/forms/{form}/insights`
+- Livewire insights page at `/forms/{form}/insights`
+
 ## Project Structure
 
 ```
@@ -105,6 +114,7 @@ app/
 │   └── Forms/
 │       ├── FormBuilder.php
 │       ├── FormIndex.php
+│       ├── FormInsights.php
 │       ├── FormPreview.php
 │       └── PublicForm.php
 ├── Models/
@@ -121,6 +131,7 @@ app/
     ├── FormImportService.php
     ├── FormDraftAutosaveService.php
     ├── FormHealthService.php
+    ├── SubmissionInsightService.php
     ├── FormSchemaValidator.php
     ├── FormStructureApplyService.php
     ├── FormService.php
@@ -165,6 +176,7 @@ docs/
 | POST | `/api/forms/{form}/unpublish` | Unpublish form |
 | PUT | `/api/forms/{form}/draft` | Autosave draft (metadata, field editor, optional JSON) |
 | GET | `/api/forms/{form}/health` | Form health / quality score (read-only) |
+| GET | `/api/forms/{form}/insights` | Submission insights / analytics (read-only) |
 | POST | `/api/forms/{form}/sections` | Create section |
 | PUT | `/api/forms/{form}/sections/{section}` | Update section |
 | DELETE | `/api/forms/{form}/sections/{section}` | Delete section |
@@ -567,6 +579,7 @@ Commit replaces the form's sections/fields, clears schema, and keeps the form in
 | GET | `/forms` | List/create forms |
 | GET | `/forms/{form}/builder` | Visual + JSON builder |
 | GET | `/forms/{form}/preview` | Owner preview (draft or published) |
+| GET | `/forms/{form}/insights` | Submission insights / analytics |
 | GET | `/f/{slug}` | Public published form |
 
 All builder routes require authentication and verified email. Authorization uses the existing `FormPolicy`.
@@ -580,6 +593,33 @@ All builder routes require authentication and verified email. Authorization uses
 5. Click **Apply JSON** to sync valid JSON back into the builder. Invalid JSON is rejected with an error and does not mutate the form.
 6. Use **Preview** to render the current draft or published schema.
 7. Click **Publish** to compile schema and set the form live. Structure changes after publish clear cached schema until republished.
+
+The JSON editor uses the same structure as `FormService::compileSchema()`:
+
+```json
+{
+  "version": 1,
+  "title": "Contact Form",
+  "description": null,
+  "sections": [
+    {
+      "id": 1,
+      "title": "Contact Details",
+      "description": null,
+      "fields": [
+        {
+          "key": "email",
+          "type": "email",
+          "label": "Email",
+          "required": true,
+          "config": {},
+          "validation": {}
+        }
+      ]
+    }
+  ]
+}
+```
 
 ### Draft vs published schema
 
@@ -711,32 +751,79 @@ The Form Builder displays a **Form Health** panel with score, grade, category br
 
 Severity levels: `error` (should fix), `warning` (improvement recommended), `info` (optional suggestion).
 
-The JSON editor uses the same structure as `FormService::compileSchema()`:
+## Smart Submission Insights
 
-```json
-{
-  "version": 1,
-  "title": "Contact Form",
-  "description": null,
-  "sections": [
-    {
-      "id": 1,
-      "title": "Contact Details",
-      "description": null,
-      "fields": [
-        {
-          "key": "email",
-          "type": "email",
-          "label": "Email",
-          "required": true,
-          "config": {},
-          "validation": {}
-        }
-      ]
-    }
-  ]
-}
+Phase 11 turns existing submission data into owner-facing analytics using **runtime database aggregation** against normalized `submissions` and `submission_answers` tables. Insights are **not persisted** and no denormalized statistics table is used in this phase.
+
+### Architecture
+
 ```
+Form
+  ↓
+SubmissionInsightService (SQL/Eloquent aggregation)
+  ↓
+overview + trend + field insights + recommendations
+  ↓
+API / Livewire UI
+```
+
+Field structure comes from `FormService::compileSchema()` (current normalized draft). Aggregates are scoped to the form via joins on `submissions.form_id`.
+
+### Overview metrics
+
+- Total submissions
+- Submissions today / last 7 days / last 30 days
+- Average submissions per day (total ÷ inclusive day span between first and latest submission)
+- First / latest submission timestamps
+
+Zero submissions return zeros and `null` timestamps without errors.
+
+### Submission trend
+
+Daily counts for the last 30 days (`DATE(submitted_at)` + `GROUP BY`), with zero-filled days for chart display.
+
+### Field insights
+
+Per field: key, label, type, required status, total responses, response rate (% of submissions with a non-empty answer).
+
+Additional aggregates by type:
+
+- **select / radio** — `GROUP BY value_text` option distribution
+- **checkbox** — per-option counts via `JSON_CONTAINS` on `value_json` arrays
+- **number** — `MIN` / `MAX` / `AVG` on numeric `value_text`
+
+Raw answer values are not returned in the API response.
+
+### Recommendations
+
+Deterministic rules (not AI), e.g.:
+
+- No submissions yet → share the public form
+- High required-field completion → success message
+- Low response rate → review optional/required settings
+- Concentrated select option (≥ 60%) → informational insight
+
+### API
+
+```
+GET /api/forms/{form}/insights
+```
+
+### Livewire UI
+
+```
+GET /forms/{form}/insights   (route name: forms.insights)
+```
+
+Requires auth + verified email. Builder / Preview / Insights navigation is shared via a form nav partial.
+
+### Authorization
+
+Uses existing `FormPolicy::view`. Cross-user access is forbidden. Only aggregated data is exposed.
+
+### Performance note
+
+Existing index on `submissions (form_id, submitted_at)` supports overview/trend queries. If field-key aggregation becomes a bottleneck at scale, a composite index on `submission_answers (field_key, submission_id)` could be considered — not added in this phase.
 
 ### Frontend dependency
 
@@ -748,7 +835,7 @@ Drag-and-drop ordering uses [SortableJS](https://github.com/SortableJS/Sortable)
 php artisan test
 ```
 
-Current suite: **196 Laravel tests passing (518 assertions)**.
+Current suite: **214 Laravel tests passing (584 assertions)**.
 
 FastAPI service tests (`ai-service/tests/`, **4 tests**): run with Python 3.12 via `pytest` inside `ai-service/` or through the provided Dockerfile.
 
