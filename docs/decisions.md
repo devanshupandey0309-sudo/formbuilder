@@ -604,3 +604,35 @@ The visual builder edits normalized `sections` / `fields` as draft state while `
 - Autosave never publishes or mutates `forms.version` / published `forms.schema`.
 - Stale autosave returns `422` with a `draft_revision` error.
 - Browser recovery is best-effort; PHPUnit covers server restore/discard paths.
+
+---
+
+## ADR-021: Deterministic Form Health scoring
+
+**Context**
+
+Form owners benefit from proactive feedback on structure, validation, and usability before publishing. The score must be explainable, deterministic, and safe to run against draft state without affecting published schema behavior.
+
+**Decision**
+
+- Introduce `FormHealthService` to analyze normalized `sections` / `fields` and return a 0–100 score with categories, severities, issues, and suggestions.
+- Calculate scores on demand; do **not** persist scores in the database.
+- Use rule-based deductions only — **no AI** for scoring.
+- Expose read-only access via `GET /api/forms/{form}/health` and a Livewire builder panel.
+
+**Reasoning**
+
+- Dynamic calculation prevents stale scores as draft structure changes (consistent with Phase 9 draft architecture).
+- Deterministic rules are testable and explainable to users.
+- Read-only analysis avoids accidental mutation of form data or published schema.
+
+**Alternatives considered**
+
+- Persisting scores in `forms.settings` or a dedicated table: rejected because draft edits would immediately stale stored values.
+- AI-generated quality feedback: rejected for non-determinism and unnecessary coupling to the AI subsystem.
+
+**Consequences**
+
+- Health reflects current draft structure, not published `forms.schema`.
+- Info-level suggestions minimally affect score; errors and warnings drive deductions.
+- Large forms are analyzed synchronously in-process (no queue required for typical form sizes).

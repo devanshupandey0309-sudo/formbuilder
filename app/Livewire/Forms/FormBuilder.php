@@ -11,6 +11,7 @@ use App\Services\AIFormGenerationService;
 use App\Services\FieldService;
 use App\Services\FormSchemaValidator;
 use App\Services\FormDraftAutosaveService;
+use App\Services\FormHealthService;
 use App\Services\FormService;
 use App\Services\FormStructureApplyService;
 use App\Services\SectionService;
@@ -71,6 +72,9 @@ class FormBuilder extends Component
     /** @var array<string, mixed>|null */
     public ?array $recoveryOffer = null;
 
+    /** @var array<string, mixed> */
+    public array $formHealth = [];
+
     private bool $isAutosaving = false;
 
     private bool $dirtyDuringAutosave = false;
@@ -84,6 +88,7 @@ class FormBuilder extends Component
         $this->lastSavedAt = $form->draft_saved_at?->toIso8601String();
         $this->autosaveStatus = 'saved';
         $this->dispatchRecoveryContext();
+        $this->refreshFormHealth();
     }
 
     public function updatedFormTitle(): void
@@ -157,6 +162,7 @@ class FormBuilder extends Component
             }
 
             $this->dispatchDraftSaved();
+            $this->refreshFormHealth();
         } catch (ValidationException $exception) {
             if ($exception->errors()['draft_revision'] ?? null) {
                 $this->autosaveStatus = 'conflict';
@@ -555,6 +561,11 @@ class FormBuilder extends Component
         });
     }
 
+    public function refreshFormHealth(): void
+    {
+        $this->formHealth = app(FormHealthService::class)->analyze($this->form);
+    }
+
     public function discardAiJob(): void
     {
         $this->activeAiJobId = null;
@@ -593,6 +604,7 @@ class FormBuilder extends Component
             $this->flashError($message);
         } finally {
             $this->isProcessing = false;
+            $this->refreshFormHealth();
         }
     }
 

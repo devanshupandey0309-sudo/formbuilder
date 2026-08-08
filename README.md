@@ -82,6 +82,15 @@ Laravel 11 application for building, publishing, and collecting responses from d
 - Relaxed draft validation (incomplete keys/labels allowed); publish validation unchanged
 - API: `PUT /api/forms/{form}/draft`
 
+### Product enhancement: Form Health Score (Phase 10)
+
+- Deterministic, explainable **Form Health / Quality Score** (0–100) calculated from current draft structure
+- Five scoring categories: Structure, Field Configuration, Validation, Required Fields, Usability
+- Severity-modeled issues (`error`, `warning`, `info`) with actionable recommendations
+- Not persisted — calculated on demand via `FormHealthService`
+- Livewire builder panel + `GET /api/forms/{form}/health`
+- Original product idea beyond core assignment requirements — helps identify quality issues before publishing
+
 ## Project Structure
 
 ```
@@ -111,6 +120,7 @@ app/
     ├── AIFormGenerationService.php
     ├── FormImportService.php
     ├── FormDraftAutosaveService.php
+    ├── FormHealthService.php
     ├── FormSchemaValidator.php
     ├── FormStructureApplyService.php
     ├── FormService.php
@@ -154,6 +164,7 @@ docs/
 | POST | `/api/forms/{form}/publish` | Publish form |
 | POST | `/api/forms/{form}/unpublish` | Unpublish form |
 | PUT | `/api/forms/{form}/draft` | Autosave draft (metadata, field editor, optional JSON) |
+| GET | `/api/forms/{form}/health` | Form health / quality score (read-only) |
 | POST | `/api/forms/{form}/sections` | Create section |
 | PUT | `/api/forms/{form}/sections/{section}` | Update section |
 | DELETE | `/api/forms/{form}/sections/{section}` | Delete section |
@@ -631,6 +642,75 @@ Each successful autosave increments `draft_revision`. Clients must send the revi
 - Invalid JSON in the JSON tab is kept client-side until it validates or the user clicks **Apply JSON**.
 - Multi-tab editing: the revision check prevents silent overwrites; refresh when a conflict is shown.
 
+## Form Health / Quality Score
+
+**Product enhancement (Phase 10)** — an original product idea that goes beyond basic form CRUD. Form Health proactively identifies structure, validation, usability, and configuration issues before publishing.
+
+The score is calculated **dynamically** from the current normalized draft structure (`sections` / `fields`). It is **not stored** in the database, so it never becomes stale.
+
+### Scoring categories (100 points total)
+
+| Category | Max | Evaluates |
+|---|---:|---|
+| Structure | 20 | Title, sections, section titles, non-empty sections, ordering |
+| Field Configuration | 25 | Keys, labels, supported types, options, duplicate keys |
+| Validation | 25 | Type-appropriate validation (email, number, date), required field labels |
+| Required Fields | 15 | Required-field balance, clarity, optional improvement hints |
+| Usability | 15 | Placeholders, meaningful labels, large sections |
+
+### Grades
+
+| Score | Grade |
+|---:|---|
+| 90–100 | Excellent |
+| 75–89 | Good |
+| 60–74 | Needs Improvement |
+| 40–59 | Poor |
+| 0–39 | Critical |
+
+### API
+
+```
+GET /api/forms/{form}/health
+```
+
+Example response:
+
+```json
+{
+  "success": true,
+  "message": "Form health retrieved successfully.",
+  "data": {
+    "score": 82,
+    "grade": "Good",
+    "summary": "Your form is in good shape with a few improvements recommended.",
+    "categories": [
+      { "key": "structure", "label": "Structure", "score": 20, "max": 20 },
+      { "key": "fields", "label": "Field Configuration", "score": 23, "max": 25 }
+    ],
+    "issues": [
+      {
+        "severity": "warning",
+        "code": "missing_validation",
+        "field_key": "email",
+        "section_id": 1,
+        "section_title": "Contact",
+        "message": "Email has no explicit validation rules."
+      }
+    ],
+    "suggestions": [
+      "Add email validation to Email."
+    ]
+  }
+}
+```
+
+### Builder integration
+
+The Form Builder displays a **Form Health** panel with score, grade, category breakdown, issues, and recommendations. Health is calculated once in Livewire state and refreshed on load, after structural changes, after successful autosave, and via a manual **Refresh** button.
+
+Severity levels: `error` (should fix), `warning` (improvement recommended), `info` (optional suggestion).
+
 The JSON editor uses the same structure as `FormService::compileSchema()`:
 
 ```json
@@ -668,7 +748,7 @@ Drag-and-drop ordering uses [SortableJS](https://github.com/SortableJS/Sortable)
 php artisan test
 ```
 
-Current suite: **169 Laravel tests passing (445 assertions)**.
+Current suite: **196 Laravel tests passing (518 assertions)**.
 
 FastAPI service tests (`ai-service/tests/`, **4 tests**): run with Python 3.12 via `pytest` inside `ai-service/` or through the provided Dockerfile.
 

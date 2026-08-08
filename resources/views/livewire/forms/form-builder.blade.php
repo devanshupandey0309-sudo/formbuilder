@@ -181,6 +181,86 @@
             </div>
         </div>
 
+        @if ($formHealth !== [])
+            <div class="bg-white shadow-sm sm:rounded-lg p-4 sm:p-6">
+                <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+                    <div>
+                        <h2 class="text-lg font-semibold text-gray-900">Form Health</h2>
+                        <p class="text-sm text-gray-600 mt-1">{{ $formHealth['summary'] ?? '' }}</p>
+                    </div>
+                    <div class="text-right">
+                        <p class="text-3xl font-bold text-gray-900">
+                            {{ $formHealth['score'] ?? 0 }}
+                            <span class="text-lg font-normal text-gray-500">/ 100</span>
+                        </p>
+                        <p @class([
+                            'text-sm font-medium mt-1',
+                            'text-green-700' => ($formHealth['grade'] ?? '') === 'Excellent',
+                            'text-indigo-700' => ($formHealth['grade'] ?? '') === 'Good',
+                            'text-yellow-700' => ($formHealth['grade'] ?? '') === 'Needs Improvement',
+                            'text-orange-700' => ($formHealth['grade'] ?? '') === 'Poor',
+                            'text-red-700' => ($formHealth['grade'] ?? '') === 'Critical',
+                        ])>{{ $formHealth['grade'] ?? 'Unknown' }}</p>
+                        <button type="button" wire:click="refreshFormHealth"
+                            class="mt-2 text-xs text-indigo-600 hover:text-indigo-800 font-medium">
+                            Refresh
+                        </button>
+                    </div>
+                </div>
+
+                @if (! empty($formHealth['categories']))
+                    <div class="mt-4 grid sm:grid-cols-2 lg:grid-cols-5 gap-3">
+                        @foreach ($formHealth['categories'] as $category)
+                            <div class="rounded-md border border-gray-200 p-3">
+                                <p class="text-xs font-medium text-gray-500 uppercase tracking-wide">{{ $category['label'] }}</p>
+                                <p class="mt-1 text-sm font-semibold text-gray-900">
+                                    {{ $category['score'] }} / {{ $category['max'] }}
+                                </p>
+                            </div>
+                        @endforeach
+                    </div>
+                @endif
+
+                @if (! empty($formHealth['issues']))
+                    <div class="mt-6">
+                        <h3 class="text-sm font-semibold text-gray-900 uppercase tracking-wide">Issues</h3>
+                        <ul class="mt-3 space-y-2">
+                            @foreach ($formHealth['issues'] as $issue)
+                                <li @class([
+                                    'text-sm flex items-start gap-2',
+                                    'text-red-700' => ($issue['severity'] ?? '') === 'error',
+                                    'text-yellow-800' => ($issue['severity'] ?? '') === 'warning',
+                                    'text-gray-600' => ($issue['severity'] ?? '') === 'info',
+                                ])>
+                                    <span aria-hidden="true">
+                                        @if (($issue['severity'] ?? '') === 'error')
+                                            ✕
+                                        @elseif (($issue['severity'] ?? '') === 'warning')
+                                            ⚠
+                                        @else
+                                            •
+                                        @endif
+                                    </span>
+                                    <span>{{ $issue['message'] }}</span>
+                                </li>
+                            @endforeach
+                        </ul>
+                    </div>
+                @endif
+
+                @if (! empty($formHealth['suggestions']))
+                    <div class="mt-6">
+                        <h3 class="text-sm font-semibold text-gray-900 uppercase tracking-wide">Recommendations</h3>
+                        <ul class="mt-3 space-y-2">
+                            @foreach ($formHealth['suggestions'] as $suggestion)
+                                <li class="text-sm text-gray-700">• {{ $suggestion }}</li>
+                            @endforeach
+                        </ul>
+                    </div>
+                @endif
+            </div>
+        @endif
+
         <div class="bg-white shadow-sm sm:rounded-lg">
             <div class="border-b border-gray-200 px-4 sm:px-6">
                 <nav class="flex gap-6">

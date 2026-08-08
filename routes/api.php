@@ -4,6 +4,7 @@ use App\Http\Controllers\AIFormController;
 use App\Http\Controllers\FieldController;
 use App\Http\Controllers\FormController;
 use App\Http\Controllers\FormDraftController;
+use App\Http\Controllers\FormHealthController;
 use App\Http\Controllers\FormImportController;
 use App\Http\Controllers\PublicFormController;
 use App\Http\Controllers\SectionController;
@@ -23,6 +24,7 @@ Route::middleware('auth')->scopeBindings()->group(function () {
     Route::post('/forms/{form}/publish', [FormController::class, 'publish']);
     Route::post('/forms/{form}/unpublish', [FormController::class, 'unpublish']);
     Route::put('/forms/{form}/draft', [FormDraftController::class, 'store'])->name('forms.draft.store');
+    Route::get('/forms/{form}/health', [FormHealthController::class, 'show']);
 
     Route::post('/forms/{form}/ai/generate', [AIFormController::class, 'generate']);
     Route::post('/forms/{form}/ai/edit', [AIFormController::class, 'edit']);
