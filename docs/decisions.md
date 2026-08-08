@@ -153,3 +153,115 @@ Wrap submission creation in a single database transaction inside `SubmissionServ
 - Failed validation produces no database rows.
 - All answer rows share the same submission record.
 - Rollback is automatic on any exception during persistence.
+
+---
+
+## ADR-006: AI provider abstraction
+
+**Context**
+
+Phase 5 introduces AI-assisted form generation. The application must support swapping AI backends (mock, OpenAI, Gemini, etc.) without rewriting business logic.
+
+**Decision**
+
+Define an `AIProvider` contract with a `generateForm(string $prompt): array` method. Business services depend on the interface; concrete providers live under `app/Services/AI/`. The default binding is `MockAIProvider` for deterministic local/testing behavior.
+
+**Reasoning**
+
+- Decouples generation workflow from vendor SDKs.
+- Enables comprehensive tests without external API calls.
+- Matches the existing service-oriented architecture.
+
+**Alternatives considered**
+
+- Calling a provider directly from `AIFormGenerationService`: rejected due to tight coupling.
+- Using Laravel's queue `jobs` table for AI state: rejected; domain AI state belongs in `ai_jobs`.
+
+**Consequences**
+
+- Adding a real provider requires a new class and container binding only.
+- Tests use `MockAIProvider::fake()` for deterministic scenarios.
+
+---
+
+## ADR-007: AI output validation
+
+**Context**
+
+AI-generated JSON cannot be trusted to be well-formed, complete, or compatible with the form builder.
+
+**Decision**
+
+All provider output passes through `AIOutputValidator` before an AI job is marked `completed`. Validation covers title, sections, fields, keys, labels, supported types, duplicate keys, and option requirements for select/radio/checkbox fields. Malformed output marks the job `failed` and stores an error message.
+
+**Reasoning**
+
+- Prevents corrupt section/field data from entering the system.
+- Normalizes field keys to stable snake_case identifiers.
+- Reuses `FieldService::SUPPORTED_TYPES` as the single type allowlist.
+
+**Alternatives considered**
+
+- Persisting raw AI output directly to sections/fields: rejected as unsafe.
+- Validating only at apply-time: rejected because clients need trustworthy preview data earlier.
+
+**Consequences**
+
+- Failed jobs contain diagnostic `error_message` values.
+- Validated output is safe to expose as preview and to apply later.
+
+---
+
+## ADR-008: AI generation does not automatically publish forms
+
+**Context**
+
+Forms have a distinct publish workflow that compiles schema and controls public availability.
+
+**Decision**
+
+AI generation stores preview data on `ai_jobs.validated_output` only. Committing structure requires an explicit apply operation via `AIFormApplyService`, which keeps the form in `draft`, clears stale schema, and replaces sections/fields transactionally. Publish remains the responsibility of `FormService::publishForm()`.
+
+**Reasoning**
+
+- Preserves owner review before public exposure.
+- Avoids bypassing existing schema compilation and validation rules.
+- Keeps AI generation separate from form persistence.
+
+**Alternatives considered**
+
+- Auto-creating and auto-publishing generated forms: rejected as too risky.
+- Writing directly to sections/fields during generation: rejected to keep preview/commit separation.
+
+**Consequences**
+
+- Two-step workflow: generate → apply → publish.
+- Apply replaces existing form structure; owners should treat it as a destructive draft update.
+
+---
+
+## ADR-009: AI jobs are separate from Laravel infrastructure jobs
+
+**Context**
+
+The project already has Laravel's queue `jobs` table for infrastructure processing. Phase 5 adds domain-level AI workflow tracking.
+
+**Decision**
+
+Use the existing `ai_jobs` table/model for AI prompt lifecycle, provider responses, validation results, retry metadata, and timestamps. Do not store AI domain state in Laravel's `jobs` table. Processing is synchronous in Phase 5; `laravel_job_id` remains available for future async integration.
+
+**Reasoning**
+
+- Domain AI jobs expose business fields (`prompt`, `validated_output`, `form_id`) not suited to Laravel's generic queue payload table.
+- Avoids conflating infrastructure retries with AI generation semantics.
+- Aligns with the schema created in Phase 1.
+
+**Alternatives considered**
+
+- Using only Laravel queue jobs for AI state: rejected due to poor fit for rich domain records and API inspection.
+- Creating a second duplicate AI task table: rejected; `ai_jobs` already exists.
+
+**Consequences**
+
+- API clients inspect AI progress through `ai_jobs` records.
+- Future async providers can populate `laravel_job_id` without changing the domain model.
