@@ -1,9 +1,11 @@
 <?php
 
+use App\Http\Controllers\FieldController;
 use App\Http\Controllers\FormController;
+use App\Http\Controllers\SectionController;
 use Illuminate\Support\Facades\Route;
 
-Route::middleware('auth')->group(function () {
+Route::middleware('auth')->scopeBindings()->group(function () {
     Route::get('/forms', [FormController::class, 'index']);
     Route::post('/forms', [FormController::class, 'store']);
     Route::get('/forms/{form}', [FormController::class, 'show']);
@@ -11,4 +13,14 @@ Route::middleware('auth')->group(function () {
     Route::delete('/forms/{form}', [FormController::class, 'destroy']);
     Route::post('/forms/{form}/publish', [FormController::class, 'publish']);
     Route::post('/forms/{form}/unpublish', [FormController::class, 'unpublish']);
+
+    Route::post('/forms/{form}/sections/reorder', [SectionController::class, 'reorder']);
+    Route::post('/forms/{form}/sections', [SectionController::class, 'store']);
+    Route::put('/forms/{form}/sections/{section}', [SectionController::class, 'update']);
+    Route::delete('/forms/{form}/sections/{section}', [SectionController::class, 'destroy']);
+
+    Route::post('/forms/{form}/sections/{section}/fields/reorder', [FieldController::class, 'reorder']);
+    Route::post('/forms/{form}/sections/{section}/fields', [FieldController::class, 'store']);
+    Route::put('/forms/{form}/sections/{section}/fields/{field}', [FieldController::class, 'update']);
+    Route::delete('/forms/{form}/sections/{section}/fields/{field}', [FieldController::class, 'destroy']);
 });
