@@ -19,16 +19,16 @@ class PublicFormController extends Controller
         try {
             $form = $this->submissionService->getPublishedFormBySlug($slug);
         } catch (ModelNotFoundException) {
-            return $this->error('Form not found.', 404);
+            return $this->apiError('Form not found.', 404);
         } catch (ValidationException $exception) {
-            return $this->error(
-                $exception->getMessage(),
+            return $this->apiError(
+                'Form not available.',
                 422,
-                $exception->errors(),
+                ['errors' => $exception->errors()],
             );
         }
 
-        return $this->success('Form retrieved successfully.', [
+        return $this->apiSuccess('Form retrieved successfully.', [
             'slug' => $form->slug,
             'title' => $form->schema['title'] ?? $form->title,
             'description' => $form->schema['description'] ?? $form->description,
@@ -50,43 +50,17 @@ class PublicFormController extends Controller
                 $request->userAgent(),
             );
         } catch (ModelNotFoundException) {
-            return $this->error('Form not found.', 404);
+            return $this->apiError('Form not found.', 404);
         } catch (ValidationException $exception) {
-            return $this->error(
+            return $this->apiError(
                 'Submission validation failed.',
                 422,
                 ['errors' => $exception->errors()],
             );
         }
 
-        return $this->success('Submission created successfully.', [
+        return $this->apiSuccess('Submission created successfully.', [
             'submission_id' => $submission->id,
         ], 201);
-    }
-
-    private function success(string $message, mixed $data = null, int $status = 200): JsonResponse
-    {
-        return response()->json([
-            'success' => true,
-            'message' => $message,
-            'data' => $data,
-        ], $status);
-    }
-
-    /**
-     * @param  array<string, mixed>|null  $data
-     */
-    private function error(string $message, int $status, ?array $data = null): JsonResponse
-    {
-        $payload = [
-            'success' => false,
-            'message' => $message,
-        ];
-
-        if ($data !== null) {
-            $payload['data'] = $data;
-        }
-
-        return response()->json($payload, $status);
     }
 }

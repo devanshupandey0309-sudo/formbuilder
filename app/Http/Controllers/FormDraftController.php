@@ -29,12 +29,10 @@ class FormDraftController extends Controller
             ],
         );
 
-        return response()->json([
-            'data' => [
-                'id' => $form->id,
-                'draft_revision' => $form->draft_revision,
-                'draft_saved_at' => $form->draft_saved_at?->toIso8601String(),
-            ],
+        return $this->apiSuccess('Draft saved successfully.', [
+            'id' => $form->id,
+            'draft_revision' => $form->draft_revision,
+            'draft_saved_at' => $form->draft_saved_at?->toIso8601String(),
         ]);
     }
 }

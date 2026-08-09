@@ -14,6 +14,7 @@ use App\Services\FormDraftAutosaveService;
 use App\Services\FormHealthService;
 use App\Services\FormService;
 use App\Services\FormStructureApplyService;
+use App\Services\FieldValidationRules;
 use App\Services\SectionService;
 use Illuminate\Contracts\View\View;
 use Illuminate\Support\Str;
@@ -295,9 +296,36 @@ class FormBuilder extends Component
         $section = $this->findOwnedSection($sectionId);
 
         $this->runBuilderAction(function () use ($section, $title, $sectionService) {
-            $sectionService->updateSection($section, ['title' => $title]);
+            $sectionService->updateSection($this->form, $section, ['title' => $title]);
             $this->flashSuccess('Section updated.');
         }, refreshJson: false);
+    }
+
+    public function updateSectionDescription(int $sectionId, ?string $description, SectionService $sectionService): void
+    {
+        $section = $this->findOwnedSection($sectionId);
+
+        $this->runBuilderAction(function () use ($section, $description, $sectionService) {
+            $sectionService->updateSection($this->form, $section, [
+                'title' => $section->title,
+                'description' => blank($description) ? null : $description,
+            ]);
+        }, refreshJson: false);
+    }
+
+    public function reloadFromServer(): void
+    {
+        $this->form->refresh();
+        $this->loadForm($this->form);
+        $this->draftRevision = (int) $this->form->draft_revision;
+        $this->lastSavedAt = $this->form->draft_saved_at?->toIso8601String();
+        $this->autosaveStatus = 'saved';
+        $this->draftDirty = false;
+        $this->selectedFieldId = null;
+        $this->selectedSectionId = null;
+        $this->fieldEditor = [];
+        $this->syncJsonFromForm(app(FormService::class));
+        $this->flashSuccess('Form reloaded from server.');
     }
 
     public function deleteSection(int $sectionId, SectionService $sectionService): void
@@ -305,7 +333,7 @@ class FormBuilder extends Component
         $section = $this->findOwnedSection($sectionId);
 
         $this->runBuilderAction(function () use ($section, $sectionService) {
-            $sectionService->deleteSection($section);
+            $sectionService->deleteSection($this->form, $section);
 
             if ($this->selectedSectionId === $section->id) {
                 $this->selectedSectionId = null;
@@ -338,8 +366,9 @@ class FormBuilder extends Component
     public function addField(int $sectionId, FieldService $fieldService): void
     {
         $section = $this->findOwnedSection($sectionId);
+        $newFieldId = null;
 
-        $this->runBuilderAction(function () use ($section, $fieldService) {
+        $this->runBuilderAction(function () use ($section, $fieldService, &$newFieldId) {
             $key = $this->generateDefaultFieldKey('new_field');
 
             $field = $fieldService->createField($this->form, $section, [
@@ -349,10 +378,14 @@ class FormBuilder extends Component
                 'is_required' => false,
             ]);
 
+            $newFieldId = $field->id;
             $this->selectedSectionId = $section->id;
-            $this->selectField($field->id);
             $this->flashSuccess('Field added.');
         });
+
+        if ($newFieldId !== null) {
+            $this->selectField($newFieldId);
+        }
     }
 
     public function selectField(int $fieldId): void
@@ -364,6 +397,18 @@ class FormBuilder extends Component
         $this->fieldEditor = $this->fieldToEditorState($field);
     }
 
+    public function updatedFieldEditorType(): void
+    {
+        if ($this->fieldEditor === []) {
+            return;
+        }
+
+        $this->fieldEditor = array_merge(
+            $this->fieldEditor,
+            FieldValidationRules::defaultEditorValidationState((string) ($this->fieldEditor['type'] ?? 'text')),
+        );
+    }
+
     public function saveSelectedField(FieldService $fieldService): void
     {
         if ($this->selectedFieldId === null) {
@@ -372,18 +417,21 @@ class FormBuilder extends Component
 
         $field = $this->findOwnedField($this->selectedFieldId);
 
-        $validated = $this->validate([
+        $this->validate([
             'fieldEditor.label' => ['required', 'string', 'max:255'],
             'fieldEditor.key' => ['required', 'string', 'max:255', 'regex:/^[a-z][a-z0-9_]*$/'],
             'fieldEditor.type' => ['required', 'string', 'in:'.implode(',', FieldService::SUPPORTED_TYPES)],
             'fieldEditor.is_required' => ['boolean'],
             'fieldEditor.placeholder' => ['nullable', 'string', 'max:255'],
             'fieldEditor.optionsText' => ['nullable', 'string'],
-            'fieldEditor.validation_min' => ['nullable', 'numeric'],
-            'fieldEditor.validation_max' => ['nullable', 'numeric'],
+            'fieldEditor.validation_format_enabled' => ['boolean'],
+            'fieldEditor.validation_min' => ['nullable'],
+            'fieldEditor.validation_max' => ['nullable'],
+            'fieldEditor.validation_min_length' => ['nullable', 'integer', 'min:0'],
+            'fieldEditor.validation_max_length' => ['nullable', 'integer', 'min:0'],
         ]);
 
-        $editor = $validated['fieldEditor'];
+        $editor = $this->fieldEditor;
 
         if ($editor['key'] !== $field->key
             && $this->form->fields()->where('key', $editor['key'])->where('id', '!=', $field->id)->exists()) {
@@ -403,7 +451,7 @@ class FormBuilder extends Component
         ];
 
         $this->runBuilderAction(function () use ($field, $payload, $fieldService) {
-            $fieldService->updateField($field, $payload);
+            $fieldService->updateField($this->form, $field, $payload);
             $this->selectField($field->id);
             $this->recordDraftTouch();
             $this->flashSuccess('Field saved.');
@@ -413,12 +461,17 @@ class FormBuilder extends Component
     public function duplicateField(int $fieldId, FieldService $fieldService): void
     {
         $field = $this->findOwnedField($fieldId);
+        $duplicateFieldId = null;
 
-        $this->runBuilderAction(function () use ($field, $fieldService) {
-            $duplicate = $fieldService->duplicateField($field);
-            $this->selectField($duplicate->id);
+        $this->runBuilderAction(function () use ($field, $fieldService, &$duplicateFieldId) {
+            $duplicate = $fieldService->duplicateField($this->form, $field);
+            $duplicateFieldId = $duplicate->id;
             $this->flashSuccess('Field duplicated.');
         });
+
+        if ($duplicateFieldId !== null) {
+            $this->selectField($duplicateFieldId);
+        }
     }
 
     public function deleteField(int $fieldId, FieldService $fieldService): void
@@ -426,7 +479,7 @@ class FormBuilder extends Component
         $field = $this->findOwnedField($fieldId);
 
         $this->runBuilderAction(function () use ($field, $fieldService) {
-            $fieldService->deleteField($field);
+            $fieldService->deleteField($this->form, $field);
 
             if ($this->selectedFieldId === $field->id) {
                 $this->selectedFieldId = null;
@@ -755,16 +808,14 @@ class FormBuilder extends Component
             return (string) $option;
         })->implode("\n");
 
-        return [
+        return array_merge([
             'label' => $field->label,
             'key' => $field->key,
             'type' => $field->type,
             'is_required' => $field->is_required,
             'placeholder' => $field->config['placeholder'] ?? '',
             'optionsText' => $optionsText,
-            'validation_min' => $field->validation['min'] ?? '',
-            'validation_max' => $field->validation['max'] ?? '',
-        ];
+        ], FieldValidationRules::editorStateFromField($field->type, is_array($field->validation) ? $field->validation : null));
     }
 
     /**
@@ -800,19 +851,7 @@ class FormBuilder extends Component
      */
     private function buildValidationPayload(array $editor): ?array
     {
-        if ($editor['type'] !== 'number') {
-            return null;
-        }
-
-        $validation = [];
-
-        if ($editor['validation_min'] !== '' && $editor['validation_min'] !== null) {
-            $validation['min'] = $editor['validation_min'];
-        }
-
-        if ($editor['validation_max'] !== '' && $editor['validation_max'] !== null) {
-            $validation['max'] = $editor['validation_max'];
-        }
+        $validation = FieldValidationRules::validationFromEditor($editor);
 
         return $validation === [] ? null : $validation;
     }

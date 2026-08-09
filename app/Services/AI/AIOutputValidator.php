@@ -3,6 +3,7 @@
 namespace App\Services\AI;
 
 use App\Services\FieldService;
+use App\Services\FieldValidationRules;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
@@ -125,6 +126,9 @@ class AIOutputValidator
         }
 
         $config = is_array($field['config'] ?? null) ? $field['config'] : [];
+        $validation = is_array($field['validation'] ?? null) ? $field['validation'] : [];
+
+        FieldValidationRules::assertSupported($type, $validation, $path);
 
         if (in_array($type, ['select', 'radio', 'checkbox'], true)) {
             $options = $config['options'] ?? null;
@@ -167,6 +171,7 @@ class AIOutputValidator
             'type' => $type,
             'required' => (bool) ($field['required'] ?? false),
             'config' => $config,
+            'validation' => FieldValidationRules::normalize($type, $validation),
         ];
     }
 }

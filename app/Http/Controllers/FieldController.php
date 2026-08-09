@@ -21,23 +21,23 @@ class FieldController extends Controller
     {
         $field = $this->fieldService->createField($form, $section, $request->validated());
 
-        return $this->success('Field created successfully.', $field, 201);
+        return $this->apiSuccess('Field created successfully.', $field, 201);
     }
 
     public function update(UpdateFieldRequest $request, Form $form, Section $section, Field $field): JsonResponse
     {
-        $field = $this->fieldService->updateField($field, $request->validated());
+        $field = $this->fieldService->updateField($form, $field, $request->validated());
 
-        return $this->success('Field updated successfully.', $field);
+        return $this->apiSuccess('Field updated successfully.', $field);
     }
 
     public function destroy(Form $form, Section $section, Field $field): JsonResponse
     {
         $this->authorize('update', $form);
 
-        $this->fieldService->deleteField($field);
+        $this->fieldService->deleteField($form, $field);
 
-        return $this->success('Field deleted successfully.');
+        return $this->apiSuccess('Field deleted successfully.');
     }
 
     public function reorder(ReorderFieldsRequest $request, Form $form, Section $section): JsonResponse
@@ -46,15 +46,6 @@ class FieldController extends Controller
 
         $fields = $section->fields()->orderBy('sort_order')->get();
 
-        return $this->success('Fields reordered successfully.', $fields);
-    }
-
-    private function success(string $message, mixed $data = null, int $status = 200): JsonResponse
-    {
-        return response()->json([
-            'success' => true,
-            'message' => $message,
-            'data' => $data,
-        ], $status);
+        return $this->apiSuccess('Fields reordered successfully.', $fields);
     }
 }

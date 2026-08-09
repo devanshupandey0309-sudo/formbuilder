@@ -138,6 +138,34 @@ class SubmissionInsightService
     {
         $compiled = $this->formService->compileSchema($form);
         $responseCounts = $this->responseCountsByFieldKey($form->id);
+
+        $selectRadioKeys = [];
+        /** @var array<string, array<string, mixed>> $checkboxFields */
+        $checkboxFields = [];
+        $numberKeys = [];
+
+        foreach ($compiled['sections'] as $section) {
+            foreach ($section['fields'] as $field) {
+                $type = $field['type'];
+
+                if (in_array($type, ['select', 'radio'], true)) {
+                    $selectRadioKeys[] = $field['key'];
+                } elseif ($type === 'checkbox') {
+                    $checkboxFields[$field['key']] = $field;
+                } elseif ($type === 'number') {
+                    $numberKeys[] = $field['key'];
+                }
+            }
+        }
+
+        $optionDistributions = $this->optionDistributionsByFieldKeys($form->id, $selectRadioKeys);
+        $checkboxDistributions = $this->checkboxDistributionsByFieldKeys(
+            $form->id,
+            $checkboxFields,
+            $totalSubmissions,
+        );
+        $numericSummaries = $this->numericSummariesByFieldKeys($form->id, $numberKeys);
+
         $fieldInsights = [];
 
         foreach ($compiled['sections'] as $section) {
@@ -158,24 +186,22 @@ class SubmissionInsightService
                 ];
 
                 if (in_array($field['type'], ['select', 'radio'], true)) {
-                    $insight['distribution'] = $this->optionDistribution(
-                        $form->id,
-                        $key,
+                    $insight['distribution'] = $this->formatOptionDistribution(
+                        $optionDistributions[$key] ?? [],
                         $responses,
                     );
                 }
 
                 if ($field['type'] === 'checkbox') {
-                    $insight['distribution'] = $this->checkboxDistribution(
-                        $form->id,
-                        $key,
-                        $field,
-                        $totalSubmissions,
-                    );
+                    $insight['distribution'] = $checkboxDistributions[$key] ?? [];
                 }
 
                 if ($field['type'] === 'number') {
-                    $insight['numeric_summary'] = $this->numericSummary($form->id, $key);
+                    $insight['numeric_summary'] = $numericSummaries[$key] ?? [
+                        'min' => null,
+                        'max' => null,
+                        'average' => null,
+                    ];
                 }
 
                 $fieldInsights[] = $insight;
@@ -212,31 +238,188 @@ class SubmissionInsightService
     }
 
     /**
-     * @return list<array{option: string, count: int, percentage: float}>
+     * @param  list<string>  $fieldKeys
+     * @return array<string, list<array{option: string, count: int}>>
      */
-    private function optionDistribution(int $formId, string $fieldKey, int $totalResponses): array
+    private function optionDistributionsByFieldKeys(int $formId, array $fieldKeys): array
     {
-        if ($totalResponses === 0) {
+        if ($fieldKeys === []) {
             return [];
         }
 
         $rows = SubmissionAnswer::query()
             ->join('submissions', 'submissions.id', '=', 'submission_answers.submission_id')
             ->where('submissions.form_id', $formId)
-            ->where('submission_answers.field_key', $fieldKey)
+            ->whereIn('submission_answers.field_key', $fieldKeys)
             ->whereNotNull('submission_answers.value_text')
             ->where('submission_answers.value_text', '!=', '')
+            ->selectRaw('submission_answers.field_key')
             ->selectRaw('submission_answers.value_text as option_value')
             ->selectRaw('COUNT(*) as option_count')
-            ->groupBy('submission_answers.value_text')
+            ->groupBy('submission_answers.field_key', 'submission_answers.value_text')
+            ->orderBy('submission_answers.field_key')
             ->orderByDesc('option_count')
             ->get();
 
-        return $rows->map(fn ($row) => [
-            'option' => (string) $row->option_value,
-            'count' => (int) $row->option_count,
-            'percentage' => round(((int) $row->option_count / $totalResponses) * 100, 1),
+        $grouped = [];
+
+        foreach ($rows as $row) {
+            $grouped[(string) $row->field_key][] = [
+                'option' => (string) $row->option_value,
+                'count' => (int) $row->option_count,
+            ];
+        }
+
+        return $grouped;
+    }
+
+    /**
+     * @param  list<array{option: string, count: int}>  $rows
+     * @return list<array{option: string, count: int, percentage: float}>
+     */
+    private function formatOptionDistribution(array $rows, int $totalResponses): array
+    {
+        if ($totalResponses === 0) {
+            return [];
+        }
+
+        return collect($rows)->map(fn (array $row) => [
+            'option' => $row['option'],
+            'count' => $row['count'],
+            'percentage' => round(($row['count'] / $totalResponses) * 100, 1),
         ])->values()->all();
+    }
+
+    /**
+     * @param  array<string, array<string, mixed>>  $checkboxFields
+     * @return array<string, list<array{option: string, count: int, percentage: float}>>
+     */
+    private function checkboxDistributionsByFieldKeys(
+        int $formId,
+        array $checkboxFields,
+        int $totalSubmissions,
+    ): array {
+        if ($checkboxFields === []) {
+            return [];
+        }
+
+        $optionCounts = [];
+
+        foreach ($checkboxFields as $fieldKey => $field) {
+            $options = $this->fieldOptionValues($field);
+
+            if ($options === []) {
+                continue;
+            }
+
+            foreach ($options as $option) {
+                $optionCounts[$fieldKey][$option] = 0;
+            }
+        }
+
+        $relevantKeys = array_keys($optionCounts);
+
+        if ($relevantKeys === []) {
+            return [];
+        }
+
+        $answers = SubmissionAnswer::query()
+            ->join('submissions', 'submissions.id', '=', 'submission_answers.submission_id')
+            ->where('submissions.form_id', $formId)
+            ->whereIn('submission_answers.field_key', $relevantKeys)
+            ->whereNotNull('submission_answers.value_json')
+            ->get(['submission_answers.field_key', 'submission_answers.value_json']);
+
+        foreach ($answers as $answer) {
+            $fieldKey = (string) $answer->field_key;
+            $values = is_array($answer->value_json) ? $answer->value_json : [$answer->value_json];
+
+            foreach ($values as $value) {
+                $option = (string) $value;
+
+                if (isset($optionCounts[$fieldKey][$option])) {
+                    $optionCounts[$fieldKey][$option]++;
+                }
+            }
+        }
+
+        $distributions = [];
+
+        foreach ($optionCounts as $fieldKey => $counts) {
+            $distribution = [];
+
+            foreach ($counts as $option => $count) {
+                $distribution[] = [
+                    'option' => $option,
+                    'count' => $count,
+                    'percentage' => $totalSubmissions > 0
+                        ? round(($count / $totalSubmissions) * 100, 1)
+                        : 0.0,
+                ];
+            }
+
+            usort($distribution, fn (array $a, array $b) => $b['count'] <=> $a['count']);
+            $distributions[$fieldKey] = $distribution;
+        }
+
+        return $distributions;
+    }
+
+    /**
+     * @param  list<string>  $fieldKeys
+     * @return array<string, array{min: float|null, max: float|null, average: float|null}>
+     */
+    private function numericSummariesByFieldKeys(int $formId, array $fieldKeys): array
+    {
+        if ($fieldKeys === []) {
+            return [];
+        }
+
+        $rows = SubmissionAnswer::query()
+            ->join('submissions', 'submissions.id', '=', 'submission_answers.submission_id')
+            ->where('submissions.form_id', $formId)
+            ->whereIn('submission_answers.field_key', $fieldKeys)
+            ->whereNotNull('submission_answers.value_text')
+            ->where('submission_answers.value_text', '!=', '')
+            ->selectRaw('submission_answers.field_key')
+            ->selectRaw('MIN(CAST(submission_answers.value_text AS DECIMAL(20, 4))) as min_value')
+            ->selectRaw('MAX(CAST(submission_answers.value_text AS DECIMAL(20, 4))) as max_value')
+            ->selectRaw('AVG(CAST(submission_answers.value_text AS DECIMAL(20, 4))) as average_value')
+            ->groupBy('submission_answers.field_key')
+            ->get();
+
+        $summaries = [];
+
+        foreach ($rows as $row) {
+            if ($row->min_value === null) {
+                $summaries[(string) $row->field_key] = [
+                    'min' => null,
+                    'max' => null,
+                    'average' => null,
+                ];
+
+                continue;
+            }
+
+            $summaries[(string) $row->field_key] = [
+                'min' => (float) $row->min_value,
+                'max' => (float) $row->max_value,
+                'average' => round((float) $row->average_value, 2),
+            ];
+        }
+
+        return $summaries;
+    }
+
+    /**
+     * @return list<array{option: string, count: int, percentage: float}>
+     */
+    private function optionDistribution(int $formId, string $fieldKey, int $totalResponses): array
+    {
+        return $this->formatOptionDistribution(
+            $this->optionDistributionsByFieldKeys($formId, [$fieldKey])[$fieldKey] ?? [],
+            $totalResponses,
+        );
     }
 
     /**
@@ -249,35 +432,11 @@ class SubmissionInsightService
         array $field,
         int $totalSubmissions,
     ): array {
-        $options = $this->fieldOptionValues($field);
-
-        if ($options === []) {
-            return [];
-        }
-
-        $distribution = [];
-
-        foreach ($options as $option) {
-            $count = (int) SubmissionAnswer::query()
-                ->join('submissions', 'submissions.id', '=', 'submission_answers.submission_id')
-                ->where('submissions.form_id', $formId)
-                ->where('submission_answers.field_key', $fieldKey)
-                ->whereNotNull('submission_answers.value_json')
-                ->whereRaw('JSON_CONTAINS(submission_answers.value_json, ?)', [json_encode($option)])
-                ->count();
-
-            $distribution[] = [
-                'option' => $option,
-                'count' => $count,
-                'percentage' => $totalSubmissions > 0
-                    ? round(($count / $totalSubmissions) * 100, 1)
-                    : 0.0,
-            ];
-        }
-
-        usort($distribution, fn (array $a, array $b) => $b['count'] <=> $a['count']);
-
-        return $distribution;
+        return $this->checkboxDistributionsByFieldKeys(
+            $formId,
+            [$fieldKey => $field],
+            $totalSubmissions,
+        )[$fieldKey] ?? [];
     }
 
     /**
@@ -285,29 +444,10 @@ class SubmissionInsightService
      */
     private function numericSummary(int $formId, string $fieldKey): array
     {
-        $summary = SubmissionAnswer::query()
-            ->join('submissions', 'submissions.id', '=', 'submission_answers.submission_id')
-            ->where('submissions.form_id', $formId)
-            ->where('submission_answers.field_key', $fieldKey)
-            ->whereNotNull('submission_answers.value_text')
-            ->where('submission_answers.value_text', '!=', '')
-            ->selectRaw('MIN(CAST(submission_answers.value_text AS DECIMAL(20, 4))) as min_value')
-            ->selectRaw('MAX(CAST(submission_answers.value_text AS DECIMAL(20, 4))) as max_value')
-            ->selectRaw('AVG(CAST(submission_answers.value_text AS DECIMAL(20, 4))) as average_value')
-            ->first();
-
-        if ($summary === null || $summary->min_value === null) {
-            return [
-                'min' => null,
-                'max' => null,
-                'average' => null,
-            ];
-        }
-
-        return [
-            'min' => (float) $summary->min_value,
-            'max' => (float) $summary->max_value,
-            'average' => round((float) $summary->average_value, 2),
+        return $this->numericSummariesByFieldKeys($formId, [$fieldKey])[$fieldKey] ?? [
+            'min' => null,
+            'max' => null,
+            'average' => null,
         ];
     }
 

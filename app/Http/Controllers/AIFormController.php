@@ -26,7 +26,7 @@ class AIFormController extends Controller
             $request->validated('prompt'),
         );
 
-        return $this->success(
+        return $this->apiSuccess(
             'AI form generation queued successfully.',
             $this->formatJobResponse($aiJob),
             202,
@@ -41,7 +41,7 @@ class AIFormController extends Controller
             $request->validated('prompt'),
         );
 
-        return $this->success(
+        return $this->apiSuccess(
             'AI form edit queued successfully.',
             $this->formatJobResponse($aiJob),
             202,
@@ -54,7 +54,7 @@ class AIFormController extends Controller
 
         $aiJob = $this->generationService->getJob($form, $aiJob);
 
-        return $this->success('AI job retrieved successfully.', $this->formatJobResponse($aiJob));
+        return $this->apiSuccess('AI job retrieved successfully.', $this->formatJobResponse($aiJob));
     }
 
     public function apply(Form $form, AIJob $aiJob): JsonResponse
@@ -64,14 +64,14 @@ class AIFormController extends Controller
         try {
             $form = $this->applyService->apply($form, $aiJob);
         } catch (ValidationException $exception) {
-            return $this->error(
+            return $this->apiError(
                 'AI job cannot be applied.',
                 422,
                 ['errors' => $exception->errors()],
             );
         }
 
-        return $this->success('Generated form applied successfully.', $form);
+        return $this->apiSuccess('Generated form applied successfully.', $form);
     }
 
     /**
@@ -90,35 +90,10 @@ class AIFormController extends Controller
                 'attempt_count' => $aiJob->attempt_count,
                 'started_at' => $aiJob->started_at,
                 'completed_at' => $aiJob->completed_at,
+                'applied_at' => $aiJob->applied_at,
                 'created_at' => $aiJob->created_at,
             ],
             'generated_form' => $aiJob->validated_output,
         ];
-    }
-
-    private function success(string $message, mixed $data = null, int $status = 200): JsonResponse
-    {
-        return response()->json([
-            'success' => true,
-            'message' => $message,
-            'data' => $data,
-        ], $status);
-    }
-
-    /**
-     * @param  array<string, mixed>|null  $data
-     */
-    private function error(string $message, int $status, ?array $data = null): JsonResponse
-    {
-        $payload = [
-            'success' => false,
-            'message' => $message,
-        ];
-
-        if ($data !== null) {
-            $payload['data'] = $data;
-        }
-
-        return response()->json($payload, $status);
     }
 }

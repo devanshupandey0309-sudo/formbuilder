@@ -667,3 +667,77 @@ Form owners need analytics on submissions (volume trends, field response rates, 
 - Insights are read-only and scoped by `FormPolicy::view`.
 - Checkbox distributions use MySQL `JSON_CONTAINS` per configured option.
 - A future optimization phase may add materialized statistics or indexes if profiling shows bottlenecks.
+
+---
+
+## ADR-023: Register rate limiters in AppServiceProvider
+
+**Context**
+
+Laravel 11 configures middleware via `bootstrap/app.php` using `Application::configure()->withMiddleware()`. The project initially registered named rate limiters (`RateLimiter::for()`) inside that callback. During HTTP bootstrap, the callback runs before the application container sets the facade root, causing:
+
+```
+RuntimeException: A facade root has not been set.
+```
+
+**Decision**
+
+Register all named rate limiters in `App\Providers\AppServiceProvider::configureRateLimiting()` during provider `boot()`. Keep `bootstrap/app.php` responsible for routing, middleware aliases, and API exception rendering only.
+
+**Reasoning**
+
+- Provider boot runs after the container and facades are available.
+- Preserves existing limiter names, limits, keys, and route `throttle:*` middleware without behavioral change.
+- Follows Laravel 11's separation between application configuration (`bootstrap/app.php`) and service registration (providers).
+
+**Alternatives considered**
+
+- Disabling rate limiting: rejected (security regression).
+- Inline limit definitions in route files: rejected (duplication, harder to audit).
+- Deferring limiter registration to a custom bootstrap callback: rejected in favor of standard provider boot.
+
+**Consequences**
+
+- `bootstrap/app.php` must not call `RateLimiter::for()`.
+- Security documentation references `AppServiceProvider` as the rate limiter source of truth.
+- Regression tests assert application bootstrap and limiter registration.
+
+---
+
+## Part D — Assignment differentiators
+
+The assignment requires at least three meaningful improvements beyond core CRUD. This project implements:
+
+| Differentiator | Implementation | Documentation |
+|----------------|----------------|---------------|
+| **Form Health scoring** | `FormHealthService` — deterministic 0–100 score with actionable issue codes (missing validation, empty sections, etc.) | ADR-021, [evaluator-checklist.md](evaluator-checklist.md) |
+| **Submission insights** | `SubmissionInsightService` — overview, trends, per-field analytics, recommendations without denormalized tables | ADR-022, `/forms/{id}/insights` |
+| **Draft autosave + recovery** | `FormDraftAutosaveService` + Livewire revision conflict handling + browser `localStorage` recovery | ADR-020, `FormDraftAutosaveTest` |
+
+Additional differentiators documented elsewhere:
+
+- **Explicit AI/import apply workflows** — staged proposals; owner must apply before structure changes (ADR-010, ADR-019)
+- **Gemini + mock AI provider architecture** — opt-in real LLM with deterministic mock/CI default (ADR-006, [ai-architecture.md](ai-architecture.md))
+- **Field validation metadata model** — `FieldValidationRules` ties builder UI, health checks, and public submission enforcement
+
+---
+
+## Assumptions
+
+- Single-owner forms (no teams/roles) for assignment scope
+- Session authentication (Breeze) for web + API; no Sanctum tokens
+- MySQL in production-like setups; SQLite acceptable for quick local starts
+- Mock AI provider is the default; Gemini and FastAPI HTTP providers are opt-in
+- Published `forms.schema` is the public validation contract
+- Phone numbers are modeled as `text` fields until a dedicated `phone` type is added
+- File upload fields are not implemented in v1; assignment gap documented in [known-limitations.md](known-limitations.md)
+
+---
+
+## Next two weeks (if continuing beyond assignment)
+
+1. **Submission management** — list/search submissions, CSV export using `field_key` + `schema_snapshot`
+2. **Field type parity** — dedicated `phone` and `file` types with config (accepted types, max size) and public upload handling
+3. **Deploy Phase 12.9** — hosted demo, production env, queue worker, `APP_DEBUG=false`, live URL in README
+4. **Import UX** — in-builder preview/type correction before commit (API preview exists; UI mapping could expand)
+5. **AI job cancellation** — endpoint to cancel in-flight jobs safely

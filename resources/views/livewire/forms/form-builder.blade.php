@@ -40,7 +40,9 @@
                         class="mt-2 w-full text-sm text-gray-600 border-gray-200 rounded-md focus:border-indigo-500 focus:ring-indigo-500"></textarea>
                 </div>
 
-                <div class="flex flex-wrap items-center gap-2">
+                <div class="flex flex-wrap items-center gap-2 lg:justify-end">
+                    @include('livewire.forms.partials.form-nav', ['form' => $form, 'active' => 'builder'])
+
                     <span @class([
                         'inline-flex items-center rounded-full px-3 py-1 text-xs font-medium',
                         'bg-gray-100 text-gray-700' => $autosaveStatus === 'saved',
@@ -60,7 +62,7 @@
                                 Save failed — retry
                                 @break
                             @case('conflict')
-                                Newer draft on server — refresh
+                                Newer draft on server
                                 @break
                             @default
                                 @if ($lastSavedAt)
@@ -71,10 +73,19 @@
                         @endswitch
                     </span>
 
+                    @if ($autosaveStatus === 'conflict')
+                        <button type="button" wire:click="reloadFromServer" wire:loading.attr="disabled" wire:target="reloadFromServer"
+                            class="inline-flex items-center px-3 py-2 border border-amber-300 rounded-md text-sm font-medium text-amber-900 bg-white hover:bg-amber-50 disabled:opacity-50">
+                            <span wire:loading wire:target="reloadFromServer">Reloading...</span>
+                            <span wire:loading.remove wire:target="reloadFromServer">Reload from server</span>
+                        </button>
+                    @endif
+
                     <button type="button" wire:click="saveDraft" wire:loading.attr="disabled"
                         wire:target="saveDraft,autosaveDraft"
                         class="inline-flex items-center px-3 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50">
-                        Save Draft
+                        <span wire:loading wire:target="saveDraft,autosaveDraft">Saving...</span>
+                        <span wire:loading.remove wire:target="saveDraft,autosaveDraft">Save Draft</span>
                     </button>
                     <span @class([
                         'inline-flex items-center rounded-full px-3 py-1 text-xs font-medium',
@@ -89,24 +100,16 @@
                         @endif
                     </span>
 
-                    <a href="{{ route('forms.insights', $form) }}" wire:navigate
-                        class="inline-flex items-center px-3 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50">
-                        Insights
-                    </a>
-
-                    <a href="{{ route('forms.preview', $form) }}" wire:navigate
-                        class="inline-flex items-center px-3 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50">
-                        Preview
-                    </a>
-
                     @if ($form->status === 'published')
-                        <button type="button" wire:click="unpublish" wire:loading.attr="disabled"
-                            class="inline-flex items-center px-3 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50">
-                            Unpublish
+                        <button type="button" wire:click="unpublish" wire:loading.attr="disabled" wire:target="unpublish"
+                            wire:confirm="Unpublish this form? The public URL will stop accepting submissions until you publish again."
+                            class="inline-flex items-center px-3 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50">
+                            <span wire:loading wire:target="unpublish">Unpublishing...</span>
+                            <span wire:loading.remove wire:target="unpublish">Unpublish</span>
                         </button>
                     @endif
 
-                    <button type="button" wire:click="publish" wire:loading.attr="disabled"
+                    <button type="button" wire:click="publish" wire:loading.attr="disabled" wire:target="publish"
                         class="inline-flex items-center px-4 py-2 border border-transparent rounded-md text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50">
                         <span wire:loading wire:target="publish">Publishing...</span>
                         <span wire:loading.remove wire:target="publish">Publish</span>
@@ -114,13 +117,43 @@
                 </div>
             </div>
 
+            @if ($needsRepublish)
+                <div class="mt-4 rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900" role="status">
+                    <p class="font-medium">Draft changes are not live yet.</p>
+                    <p class="mt-1">The public form still serves the last published version. Publish again to update what respondents see.</p>
+                </div>
+            @elseif ($form->status === 'draft')
+                <p class="mt-4 text-sm text-gray-600">
+                    Publishing compiles the current builder structure and makes the form available at a public fill URL.
+                </p>
+            @endif
+
             @if ($statusMessage)
                 <div @class([
                     'mt-4 rounded-md p-3 text-sm',
                     'bg-green-50 text-green-800' => $statusType === 'success',
                     'bg-red-50 text-red-800' => $statusType === 'error',
-                ])>
+                ]) role="alert" aria-live="polite">
                     {{ $statusMessage }}
+                </div>
+            @endif
+
+            @if ($form->status === 'published' && $form->slug)
+                <div class="mt-4 rounded-md border border-green-200 bg-green-50 p-4">
+                    <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                        <div class="min-w-0">
+                            <p class="text-sm font-medium text-green-900">Public fill URL</p>
+                            <p class="text-xs text-green-800 mt-1">Share this link so anyone can fill and submit the published form.</p>
+                            <a href="{{ route('forms.public', $form->slug) }}" target="_blank" rel="noopener noreferrer"
+                                class="mt-2 inline-block text-sm font-medium text-indigo-700 hover:text-indigo-900 break-all">
+                                {{ route('forms.public', $form->slug) }}
+                            </a>
+                        </div>
+                        <a href="{{ route('forms.public', $form->slug) }}" target="_blank" rel="noopener noreferrer"
+                            class="inline-flex shrink-0 items-center justify-center px-4 py-2 rounded-md text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700">
+                            Open public form
+                        </a>
+                    </div>
                 </div>
             @endif
         </div>
@@ -135,10 +168,14 @@
                     class="w-full border-gray-300 focus:border-indigo-500 focus:ring-indigo-500 rounded-md shadow-sm"></textarea>
 
                 <div class="flex flex-wrap gap-2">
-                    <x-primary-button type="button" wire:click="startAiGenerate">Generate</x-primary-button>
-                    <button type="button" wire:click="startAiEdit"
-                        class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50">
-                        Edit Current Form
+                    <x-primary-button type="button" wire:click="startAiGenerate" wire:loading.attr="disabled" wire:target="startAiGenerate">
+                        <span wire:loading wire:target="startAiGenerate">Starting...</span>
+                        <span wire:loading.remove wire:target="startAiGenerate">Generate</span>
+                    </x-primary-button>
+                    <button type="button" wire:click="startAiEdit" wire:loading.attr="disabled" wire:target="startAiEdit"
+                        class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50">
+                        <span wire:loading wire:target="startAiEdit">Starting...</span>
+                        <span wire:loading.remove wire:target="startAiEdit">Edit Current Form</span>
                     </button>
                     @if ($activeAiJobId)
                         <button type="button" wire:click="discardAiJob"
@@ -174,7 +211,10 @@
                             </div>
 
                             <div class="flex gap-2">
-                                <x-primary-button type="button" wire:click="applyAiJob">Apply Changes</x-primary-button>
+                                <x-primary-button type="button" wire:click="applyAiJob" wire:loading.attr="disabled" wire:target="applyAiJob">
+                                    <span wire:loading wire:target="applyAiJob">Applying...</span>
+                                    <span wire:loading.remove wire:target="applyAiJob">Apply Changes</span>
+                                </x-primary-button>
                                 <button type="button" wire:click="discardAiJob"
                                     class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50">
                                     Discard
@@ -293,8 +333,11 @@
                     <aside class="lg:col-span-3 border-r border-gray-200 p-4 space-y-4">
                         <div class="flex items-center justify-between">
                             <h2 class="text-sm font-semibold text-gray-900 uppercase tracking-wide">Sections</h2>
-                            <button type="button" wire:click="addSection"
-                                class="text-sm text-indigo-600 hover:text-indigo-800 font-medium">+ Add</button>
+                            <button type="button" wire:click="addSection" wire:loading.attr="disabled" wire:target="addSection"
+                                class="text-sm text-indigo-600 hover:text-indigo-800 font-medium disabled:opacity-50">
+                                <span wire:loading wire:target="addSection">Adding...</span>
+                                <span wire:loading.remove wire:target="addSection">+ Add</span>
+                            </button>
                         </div>
 
                         <ul class="space-y-2" data-sortable-sections>
@@ -311,7 +354,14 @@
                                     </button>
                                 </li>
                             @empty
-                                <li class="text-sm text-gray-500">No sections yet.</li>
+                                <li class="rounded-md border border-dashed border-gray-300 p-4 text-center">
+                                    <p class="text-sm text-gray-600">No sections yet.</p>
+                                    <p class="text-xs text-gray-500 mt-1">Sections group related fields on your form.</p>
+                                    <button type="button" wire:click="addSection" wire:loading.attr="disabled" wire:target="addSection"
+                                        class="mt-3 inline-flex items-center px-3 py-1.5 rounded-md text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50">
+                                        Add first section
+                                    </button>
+                                </li>
                             @endforelse
                         </ul>
                     </aside>
@@ -322,13 +372,23 @@
                         @forelse ($form->sections as $section)
                             <div class="rounded-lg border border-gray-200 bg-gray-50 p-4 space-y-3">
                                 <div class="flex items-start justify-between gap-3">
-                                    <input type="text" value="{{ $section->title }}"
-                                        wire:change="updateSectionTitle({{ $section->id }}, $event.target.value)"
-                                        class="flex-1 text-lg font-medium bg-transparent border-0 border-b border-gray-300 focus:border-indigo-500 focus:ring-0 px-0" />
+                                    <div class="flex-1 space-y-2">
+                                        <label class="sr-only" for="section-title-{{ $section->id }}">Section title</label>
+                                        <input id="section-title-{{ $section->id }}" type="text" value="{{ $section->title }}"
+                                            wire:change="updateSectionTitle({{ $section->id }}, $event.target.value)"
+                                            class="w-full text-lg font-medium bg-transparent border-0 border-b border-gray-300 focus:border-indigo-500 focus:ring-0 px-0" />
+                                        <label class="sr-only" for="section-description-{{ $section->id }}">Section description</label>
+                                        <textarea id="section-description-{{ $section->id }}" rows="2"
+                                            placeholder="Section description (optional)"
+                                            wire:change="updateSectionDescription({{ $section->id }}, $event.target.value)"
+                                            class="w-full text-sm text-gray-600 bg-transparent border-gray-200 rounded-md focus:border-indigo-500 focus:ring-indigo-500">{{ $section->description }}</textarea>
+                                    </div>
                                     <button type="button"
                                         wire:click="deleteSection({{ $section->id }})"
                                         wire:confirm="Delete this section and all of its fields?"
-                                        class="text-sm text-red-600 hover:text-red-800">Delete</button>
+                                        wire:loading.attr="disabled"
+                                        wire:target="deleteSection"
+                                        class="text-sm text-red-600 hover:text-red-800 shrink-0">Delete</button>
                                 </div>
 
                                 <ul class="space-y-2" data-sortable-fields data-section-id="{{ $section->id }}">
@@ -358,16 +418,28 @@
                                             </div>
                                         </li>
                                     @empty
-                                        <li class="text-sm text-gray-500 italic">No fields in this section.</li>
+                                        <li class="rounded-md border border-dashed border-gray-200 bg-white p-4 text-center">
+                                            <p class="text-sm text-gray-600">No fields in this section.</p>
+                                            <p class="text-xs text-gray-500 mt-1">Add a field to collect responses.</p>
+                                        </li>
                                     @endforelse
                                 </ul>
 
                                 <button type="button" wire:click="addField({{ $section->id }})"
-                                    class="text-sm text-indigo-600 hover:text-indigo-800 font-medium">+ Add Field</button>
+                                    wire:loading.attr="disabled" wire:target="addField"
+                                    class="text-sm text-indigo-600 hover:text-indigo-800 font-medium disabled:opacity-50">
+                                    <span wire:loading wire:target="addField">Adding...</span>
+                                    <span wire:loading.remove wire:target="addField">+ Add Field</span>
+                                </button>
                             </div>
                         @empty
-                            <div class="rounded-lg border border-dashed border-gray-300 p-8 text-center text-sm text-gray-500">
-                                Add a section to start building your form.
+                            <div class="rounded-lg border border-dashed border-gray-300 p-8 text-center">
+                                <p class="text-sm font-medium text-gray-900">Your form canvas is empty</p>
+                                <p class="text-sm text-gray-500 mt-2">Start by adding a section. Each section can hold one or more fields.</p>
+                                <button type="button" wire:click="addSection" wire:loading.attr="disabled" wire:target="addSection"
+                                    class="mt-4 inline-flex items-center px-4 py-2 rounded-md text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50">
+                                    Add first section
+                                </button>
                             </div>
                         @endforelse
                     </section>
@@ -386,6 +458,7 @@
                                 <div>
                                     <x-input-label for="field-key" value="Key" />
                                     <x-text-input wire:model.live.debounce.1500ms="fieldEditor.key" id="field-key" class="block mt-1 w-full" type="text" />
+                                    <p class="mt-1 text-xs text-gray-500">Lowercase letters, numbers, and underscores. Must start with a letter.</p>
                                     <x-input-error :messages="$errors->get('fieldEditor.key')" class="mt-2" />
                                 </div>
 
@@ -419,40 +492,104 @@
                                     </div>
                                 @endif
 
-                                @if (($fieldEditor['type'] ?? '') === $numberType)
-                                    <div class="grid grid-cols-2 gap-3">
-                                        <div>
-                                            <x-input-label for="field-min" value="Min" />
-                                            <x-text-input wire:model.live.debounce.1500ms="fieldEditor.validation_min" id="field-min" class="block mt-1 w-full" type="number" />
-                                        </div>
-                                        <div>
-                                            <x-input-label for="field-max" value="Max" />
-                                            <x-text-input wire:model.live.debounce.1500ms="fieldEditor.validation_max" id="field-max" class="block mt-1 w-full" type="number" />
-                                        </div>
+                                @if (in_array($fieldEditor['type'] ?? '', ['email', 'date', 'number', 'text', 'textarea'], true))
+                                    <div class="rounded-md border border-gray-200 p-4 space-y-3">
+                                        <p class="text-sm font-medium text-gray-900">Validation</p>
+
+                                        @if (($fieldEditor['type'] ?? '') === 'email')
+                                            <label class="inline-flex items-center gap-2 text-sm text-gray-700">
+                                                <input type="checkbox" wire:model.live.debounce.1500ms="fieldEditor.validation_format_enabled" class="rounded border-gray-300 text-indigo-600 shadow-sm focus:ring-indigo-500">
+                                                Email format
+                                            </label>
+                                            <div class="grid grid-cols-2 gap-3">
+                                                <div>
+                                                    <x-input-label for="field-email-min-length" value="Minimum length" />
+                                                    <x-text-input wire:model.live.debounce.1500ms="fieldEditor.validation_min_length" id="field-email-min-length" class="block mt-1 w-full" type="number" min="0" />
+                                                </div>
+                                                <div>
+                                                    <x-input-label for="field-email-max-length" value="Maximum length" />
+                                                    <x-text-input wire:model.live.debounce.1500ms="fieldEditor.validation_max_length" id="field-email-max-length" class="block mt-1 w-full" type="number" min="0" />
+                                                </div>
+                                            </div>
+                                        @endif
+
+                                        @if (($fieldEditor['type'] ?? '') === 'date')
+                                            <label class="inline-flex items-center gap-2 text-sm text-gray-700">
+                                                <input type="checkbox" wire:model.live.debounce.1500ms="fieldEditor.validation_format_enabled" class="rounded border-gray-300 text-indigo-600 shadow-sm focus:ring-indigo-500">
+                                                Date format (Y-m-d)
+                                            </label>
+                                            <div class="grid grid-cols-2 gap-3">
+                                                <div>
+                                                    <x-input-label for="field-date-min" value="Minimum date" />
+                                                    <x-text-input wire:model.live.debounce.1500ms="fieldEditor.validation_min" id="field-date-min" class="block mt-1 w-full" type="date" />
+                                                </div>
+                                                <div>
+                                                    <x-input-label for="field-date-max" value="Maximum date" />
+                                                    <x-text-input wire:model.live.debounce.1500ms="fieldEditor.validation_max" id="field-date-max" class="block mt-1 w-full" type="date" />
+                                                </div>
+                                            </div>
+                                        @endif
+
+                                        @if (($fieldEditor['type'] ?? '') === $numberType)
+                                            <div class="grid grid-cols-2 gap-3">
+                                                <div>
+                                                    <x-input-label for="field-min" value="Minimum" />
+                                                    <x-text-input wire:model.live.debounce.1500ms="fieldEditor.validation_min" id="field-min" class="block mt-1 w-full" type="number" />
+                                                </div>
+                                                <div>
+                                                    <x-input-label for="field-max" value="Maximum" />
+                                                    <x-text-input wire:model.live.debounce.1500ms="fieldEditor.validation_max" id="field-max" class="block mt-1 w-full" type="number" />
+                                                </div>
+                                            </div>
+                                        @endif
+
+                                        @if (in_array($fieldEditor['type'] ?? '', ['text', 'textarea'], true))
+                                            <div class="grid grid-cols-2 gap-3">
+                                                <div>
+                                                    <x-input-label for="field-text-min-length" value="Minimum length" />
+                                                    <x-text-input wire:model.live.debounce.1500ms="fieldEditor.validation_min_length" id="field-text-min-length" class="block mt-1 w-full" type="number" min="0" />
+                                                </div>
+                                                <div>
+                                                    <x-input-label for="field-text-max-length" value="Maximum length" />
+                                                    <x-text-input wire:model.live.debounce.1500ms="fieldEditor.validation_max_length" id="field-text-max-length" class="block mt-1 w-full" type="number" min="0" />
+                                                </div>
+                                            </div>
+                                        @endif
                                     </div>
                                 @endif
 
-                                <x-primary-button type="submit">Save Field</x-primary-button>
+                                <x-primary-button type="submit" wire:loading.attr="disabled" wire:target="saveSelectedField">
+                                    <span wire:loading wire:target="saveSelectedField">Saving...</span>
+                                    <span wire:loading.remove wire:target="saveSelectedField">Save Field</span>
+                                </x-primary-button>
                             </form>
                         @else
-                            <p class="text-sm text-gray-500">Select a field to edit its configuration.</p>
+                            <div class="rounded-md border border-dashed border-gray-200 p-6 text-center">
+                                <p class="text-sm font-medium text-gray-900">No field selected</p>
+                                <p class="text-sm text-gray-500 mt-2">Click a field in the canvas to edit its label, type, options, and validation.</p>
+                            </div>
                         @endif
                     </aside>
                 </div>
             @else
                 <div class="p-4 sm:p-6 space-y-4">
-                    <p class="text-sm text-gray-600">
-                        Edit the compiled schema JSON below. Invalid JSON is rejected and will not modify the builder.
-                    </p>
+                    <div class="rounded-md bg-gray-50 border border-gray-200 p-4 text-sm text-gray-700 space-y-2">
+                        <p class="font-medium text-gray-900">JSON schema editor</p>
+                        <p>Edits here reflect the compiled form structure. Switch to the Builder tab to see changes on the canvas after applying valid JSON.</p>
+                        <p>Invalid JSON is rejected and will not overwrite your current form.</p>
+                    </div>
 
-                    <textarea wire:model.live.debounce.1500ms="jsonEditor" rows="24"
+                    <textarea wire:model.live.debounce.1500ms="jsonEditor" rows="24" aria-label="Form schema JSON"
                         class="w-full font-mono text-sm border-gray-300 focus:border-indigo-500 focus:ring-indigo-500 rounded-md shadow-sm"></textarea>
 
                     @if ($jsonError)
-                        <div class="rounded-md bg-red-50 p-3 text-sm text-red-800">{{ $jsonError }}</div>
+                        <div class="rounded-md bg-red-50 p-3 text-sm text-red-800" role="alert">{{ $jsonError }}</div>
                     @endif
 
-                    <x-primary-button type="button" wire:click="applyJson">Apply JSON</x-primary-button>
+                    <x-primary-button type="button" wire:click="applyJson" wire:loading.attr="disabled" wire:target="applyJson">
+                        <span wire:loading wire:target="applyJson">Applying...</span>
+                        <span wire:loading.remove wire:target="applyJson">Apply JSON</span>
+                    </x-primary-button>
                 </div>
             @endif
         </div>

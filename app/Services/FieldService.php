@@ -23,6 +23,8 @@ class FieldService
 
     public function createField(Form $form, Section $section, array $data): Field
     {
+        $this->assertSectionBelongsToForm($section, $form);
+
         return DB::transaction(function () use ($form, $section, $data) {
             $maxSortOrder = $section->fields()->max('sort_order');
             $sortOrder = $maxSortOrder === null ? 0 : $maxSortOrder + 1;
@@ -44,8 +46,10 @@ class FieldService
         });
     }
 
-    public function updateField(Field $field, array $data): Field
+    public function updateField(Form $form, Field $field, array $data): Field
     {
+        $this->assertFieldBelongsToForm($field, $form);
+
         $updates = [
             'label' => $data['label'] ?? $field->label,
             'type' => $data['type'] ?? $field->type,
@@ -73,8 +77,10 @@ class FieldService
         return $field->fresh();
     }
 
-    public function deleteField(Field $field): void
+    public function deleteField(Form $form, Field $field): void
     {
+        $this->assertFieldBelongsToForm($field, $form);
+
         DB::transaction(function () use ($field) {
             $form = $field->form;
             $field->delete();
@@ -82,8 +88,10 @@ class FieldService
         });
     }
 
-    public function duplicateField(Field $field): Field
+    public function duplicateField(Form $form, Field $field): Field
     {
+        $this->assertFieldBelongsToForm($field, $form);
+
         return DB::transaction(function () use ($field) {
             $section = $field->section;
             $form = $field->form;
@@ -191,6 +199,24 @@ class FieldService
         }
 
         return $config === [] ? null : $config;
+    }
+
+    private function assertSectionBelongsToForm(Section $section, Form $form): void
+    {
+        if ($section->form_id !== $form->id) {
+            throw ValidationException::withMessages([
+                'section' => ['This section does not belong to the specified form.'],
+            ]);
+        }
+    }
+
+    private function assertFieldBelongsToForm(Field $field, Form $form): void
+    {
+        if ($field->form_id !== $form->id) {
+            throw ValidationException::withMessages([
+                'field' => ['This field does not belong to the specified form.'],
+            ]);
+        }
     }
 
     private function markFormSchemaStale(Form $form): void

@@ -23,6 +23,8 @@ class PublicForm extends Component
 
     public string $statusType = 'success';
 
+    public bool $submitted = false;
+
     public function mount(string $slug, SubmissionService $submissionService): void
     {
         try {
@@ -47,9 +49,12 @@ class PublicForm extends Component
             );
 
             $this->answers = [];
+            $this->submitted = true;
             $this->statusMessage = 'Thank you! Your submission has been received.';
             $this->statusType = 'success';
         } catch (ValidationException $exception) {
+            $this->submitted = false;
+
             foreach ($exception->errors() as $field => $messages) {
                 $this->addError($field, $messages[0]);
             }
@@ -61,7 +66,10 @@ class PublicForm extends Component
 
     public function render(): View
     {
+        $title = ($this->schema['title'] ?? $this->form->title).' — '.config('app.name');
+
         return view('livewire.forms.public-form')
-            ->layout('layouts.guest');
+            ->layout('layouts.public')
+            ->title($title);
     }
 }

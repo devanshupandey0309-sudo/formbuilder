@@ -18,9 +18,12 @@ class SubmissionService
      */
     public function getPublishedFormBySlug(string $slug): Form
     {
-        $form = Form::query()->where('slug', $slug)->first();
+        $form = Form::query()
+            ->where('slug', $slug)
+            ->where('status', 'published')
+            ->first();
 
-        if ($form === null || $form->status !== 'published') {
+        if ($form === null) {
             throw (new ModelNotFoundException)->setModel(Form::class, [$slug]);
         }
 
@@ -161,21 +164,7 @@ class SubmissionService
         }
 
         return match ($field['type']) {
-            'text', 'textarea' => is_string($value) || is_numeric($value)
-                ? null
-                : "The {$key} field must be a string.",
-            'number' => is_numeric($value)
-                ? null
-                : "The {$key} field must be a number.",
-            'email' => filter_var((string) $value, FILTER_VALIDATE_EMAIL) !== false
-                ? null
-                : "The {$key} field must be a valid email address.",
-            'date' => Validator::make(
-                ['value' => $value],
-                ['value' => 'date_format:Y-m-d']
-            )->passes()
-                ? null
-                : "The {$key} field must be a valid date (Y-m-d).",
+            'text', 'textarea', 'number', 'email', 'date' => FieldValidationRules::validateSubmissionValue($key, $value, $field),
             'select', 'radio' => $this->validateOptionValue($key, $value, $field),
             'checkbox' => $this->validateCheckboxValue($key, $value, $field),
             default => "The {$key} field has an unsupported type.",

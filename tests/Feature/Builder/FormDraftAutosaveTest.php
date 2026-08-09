@@ -27,6 +27,7 @@ class FormDraftAutosaveTest extends TestCase
                 'description' => 'Draft description',
             ])
             ->assertOk()
+            ->assertJsonPath('success', true)
             ->assertJsonPath('data.draft_revision', 1);
 
         $form->refresh();
@@ -222,7 +223,9 @@ class FormDraftAutosaveTest extends TestCase
                 'title' => 'Stale Client',
             ])
             ->assertStatus(422)
-            ->assertJsonValidationErrors(['draft_revision']);
+            ->assertJsonPath('success', false)
+            ->assertJsonPath('message', 'Validation failed.')
+            ->assertJsonPath('data.errors.draft_revision.0', 'A newer draft exists on the server. Refresh to continue.');
 
         $this->assertSame('Server Newer', $form->fresh()->title);
     }

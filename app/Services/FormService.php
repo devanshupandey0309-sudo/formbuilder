@@ -80,10 +80,7 @@ class FormService
 
     public function compileSchema(Form $form): array
     {
-        $form->load([
-            'sections' => fn ($query) => $query->orderBy('sort_order'),
-            'sections.fields' => fn ($query) => $query->orderBy('sort_order'),
-        ]);
+        $this->ensureFormStructureLoaded($form);
 
         return [
             'version' => $form->version,
@@ -126,9 +123,7 @@ class FormService
 
     private function assertFormIsPublishable(Form $form): void
     {
-        $form->load([
-            'sections.fields' => fn ($query) => $query->orderBy('sort_order'),
-        ]);
+        $this->ensureFormStructureLoaded($form);
 
         if ($form->sections->isEmpty()) {
             throw ValidationException::withMessages([
@@ -161,5 +156,30 @@ class FormService
         unset($stored['version'], $compiled['version']);
 
         return $stored != $compiled;
+    }
+
+    private function ensureFormStructureLoaded(Form $form): void
+    {
+        if ($form->relationLoaded('sections')
+            && $form->sections->every(fn (Section $section) => $section->relationLoaded('fields'))) {
+            $form->setRelation(
+                'sections',
+                $form->sections->sortBy('sort_order')->values(),
+            );
+
+            foreach ($form->sections as $section) {
+                $section->setRelation(
+                    'fields',
+                    $section->fields->sortBy('sort_order')->values(),
+                );
+            }
+
+            return;
+        }
+
+        $form->load([
+            'sections' => fn ($query) => $query->orderBy('sort_order'),
+            'sections.fields' => fn ($query) => $query->orderBy('sort_order'),
+        ]);
     }
 }

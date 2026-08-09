@@ -20,23 +20,23 @@ class SectionController extends Controller
     {
         $section = $this->sectionService->createSection($form, $request->validated());
 
-        return $this->success('Section created successfully.', $section, 201);
+        return $this->apiSuccess('Section created successfully.', $section, 201);
     }
 
     public function update(UpdateSectionRequest $request, Form $form, Section $section): JsonResponse
     {
-        $section = $this->sectionService->updateSection($section, $request->validated());
+        $section = $this->sectionService->updateSection($form, $section, $request->validated());
 
-        return $this->success('Section updated successfully.', $section);
+        return $this->apiSuccess('Section updated successfully.', $section);
     }
 
     public function destroy(Form $form, Section $section): JsonResponse
     {
         $this->authorize('update', $form);
 
-        $this->sectionService->deleteSection($section);
+        $this->sectionService->deleteSection($form, $section);
 
-        return $this->success('Section deleted successfully.');
+        return $this->apiSuccess('Section deleted successfully.');
     }
 
     public function reorder(ReorderSectionsRequest $request, Form $form): JsonResponse
@@ -45,15 +45,6 @@ class SectionController extends Controller
 
         $sections = $form->sections()->orderBy('sort_order')->get();
 
-        return $this->success('Sections reordered successfully.', $sections);
-    }
-
-    private function success(string $message, mixed $data = null, int $status = 200): JsonResponse
-    {
-        return response()->json([
-            'success' => true,
-            'message' => $message,
-            'data' => $data,
-        ], $status);
+        return $this->apiSuccess('Sections reordered successfully.', $sections);
     }
 }

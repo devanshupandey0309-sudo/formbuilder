@@ -12,10 +12,6 @@ class FormHealthController extends Controller
     {
         $this->authorize('view', $form);
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Form health retrieved successfully.',
-            'data' => $formHealthService->analyze($form),
-        ]);
+        return $this->apiSuccess('Form health retrieved successfully.', $formHealthService->analyze($form));
     }
 }

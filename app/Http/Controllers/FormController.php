@@ -24,7 +24,7 @@ class FormController extends Controller
             ->orderByDesc('updated_at')
             ->get();
 
-        return $this->success('Forms retrieved successfully.', $forms);
+        return $this->apiSuccess('Forms retrieved successfully.', $forms);
     }
 
     public function store(StoreFormRequest $request): JsonResponse
@@ -33,21 +33,23 @@ class FormController extends Controller
 
         $form = $this->formService->createForm($request->user(), $request->validated());
 
-        return $this->success('Form created successfully.', $form, 201);
+        return $this->apiSuccess('Form created successfully.', $form, 201);
     }
 
     public function show(Form $form): JsonResponse
     {
         $this->authorize('view', $form);
 
-        return $this->success('Form retrieved successfully.', $form);
+        return $this->apiSuccess('Form retrieved successfully.', $form);
     }
 
     public function update(UpdateFormRequest $request, Form $form): JsonResponse
     {
+        $this->authorize('update', $form);
+
         $form = $this->formService->updateForm($form, $request->validated());
 
-        return $this->success('Form updated successfully.', $form);
+        return $this->apiSuccess('Form updated successfully.', $form);
     }
 
     public function destroy(Form $form): JsonResponse
@@ -56,7 +58,7 @@ class FormController extends Controller
 
         $this->formService->deleteForm($form);
 
-        return $this->success('Form deleted successfully.');
+        return $this->apiSuccess('Form deleted successfully.');
     }
 
     public function publish(Form $form): JsonResponse
@@ -65,7 +67,7 @@ class FormController extends Controller
 
         $form = $this->formService->publishForm($form);
 
-        return $this->success('Form published successfully.', $form);
+        return $this->apiSuccess('Form published successfully.', $form);
     }
 
     public function unpublish(Form $form): JsonResponse
@@ -74,15 +76,6 @@ class FormController extends Controller
 
         $form = $this->formService->unpublishForm($form);
 
-        return $this->success('Form unpublished successfully.', $form);
-    }
-
-    private function success(string $message, mixed $data = null, int $status = 200): JsonResponse
-    {
-        return response()->json([
-            'success' => true,
-            'message' => $message,
-            'data' => $data,
-        ], $status);
+        return $this->apiSuccess('Form unpublished successfully.', $form);
     }
 }

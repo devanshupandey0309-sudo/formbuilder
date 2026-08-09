@@ -12,8 +12,11 @@ use App\Http\Controllers\SubmissionInsightController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('public')->group(function () {
-    Route::get('/forms/{slug}', [PublicFormController::class, 'show']);
-    Route::post('/forms/{slug}/submit', [PublicFormController::class, 'submit']);
+    Route::get('/forms/{slug}', [PublicFormController::class, 'show'])
+        ->middleware('throttle:public-form-view');
+
+    Route::post('/forms/{slug}/submit', [PublicFormController::class, 'submit'])
+        ->middleware('throttle:public-form-submit');
 });
 
 Route::middleware('auth')->scopeBindings()->group(function () {
@@ -24,16 +27,15 @@ Route::middleware('auth')->scopeBindings()->group(function () {
     Route::delete('/forms/{form}', [FormController::class, 'destroy']);
     Route::post('/forms/{form}/publish', [FormController::class, 'publish']);
     Route::post('/forms/{form}/unpublish', [FormController::class, 'unpublish']);
-    Route::put('/forms/{form}/draft', [FormDraftController::class, 'store'])->name('forms.draft.store');
+    Route::put('/forms/{form}/draft', [FormDraftController::class, 'store'])->middleware('throttle:form-draft')->name('forms.draft.store');
     Route::get('/forms/{form}/health', [FormHealthController::class, 'show']);
     Route::get('/forms/{form}/insights', [SubmissionInsightController::class, 'show']);
-
-    Route::post('/forms/{form}/ai/generate', [AIFormController::class, 'generate']);
-    Route::post('/forms/{form}/ai/edit', [AIFormController::class, 'edit']);
+    Route::post('/forms/{form}/ai/generate', [AIFormController::class, 'generate'])->middleware('throttle:ai-form');
+    Route::post('/forms/{form}/ai/edit', [AIFormController::class, 'edit'])->middleware('throttle:ai-form');
     Route::get('/forms/{form}/ai/jobs/{aiJob}', [AIFormController::class, 'show']);
     Route::post('/forms/{form}/ai/jobs/{aiJob}/apply', [AIFormController::class, 'apply']);
 
-    Route::post('/forms/{form}/imports', [FormImportController::class, 'store']);
+    Route::post('/forms/{form}/imports', [FormImportController::class, 'store'])->middleware('throttle:form-import');
     Route::get('/forms/{form}/imports/{formImport}', [FormImportController::class, 'show']);
     Route::get('/forms/{form}/imports/{formImport}/preview', [FormImportController::class, 'preview']);
     Route::post('/forms/{form}/imports/{formImport}/commit', [FormImportController::class, 'commit']);

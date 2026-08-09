@@ -7,6 +7,14 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class AIJob extends Model
 {
+    public const STATUS_PENDING = 'pending';
+
+    public const STATUS_PROCESSING = 'processing';
+
+    public const STATUS_COMPLETED = 'completed';
+
+    public const STATUS_FAILED = 'failed';
+
     protected $table = 'ai_jobs';
 
     protected $fillable = [
@@ -24,6 +32,7 @@ class AIJob extends Model
         'laravel_job_id',
         'started_at',
         'completed_at',
+        'applied_at',
     ];
 
     protected function casts(): array
@@ -34,7 +43,29 @@ class AIJob extends Model
             'validated_output' => 'array',
             'started_at' => 'datetime',
             'completed_at' => 'datetime',
+            'applied_at' => 'datetime',
         ];
+    }
+
+    /**
+     * @return list<string>
+     */
+    public static function terminalStatuses(): array
+    {
+        return [
+            self::STATUS_COMPLETED,
+            self::STATUS_FAILED,
+        ];
+    }
+
+    public function isTerminal(): bool
+    {
+        return in_array($this->status, self::terminalStatuses(), true);
+    }
+
+    public function wasApplied(): bool
+    {
+        return $this->applied_at !== null;
     }
 
     public function user(): BelongsTo

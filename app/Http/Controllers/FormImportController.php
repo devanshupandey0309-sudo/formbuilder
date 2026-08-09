@@ -25,14 +25,14 @@ class FormImportController extends Controller
         );
 
         if ($import->status === 'failed') {
-            return $this->error(
+            return $this->apiError(
                 'Form import failed.',
                 422,
                 ['form_import' => $this->formatImportResponse($import)],
             );
         }
 
-        return $this->success(
+        return $this->apiSuccess(
             'Form import processed successfully.',
             ['form_import' => $this->formatImportResponse($import)],
             201,
@@ -45,7 +45,7 @@ class FormImportController extends Controller
 
         $formImport = $this->formImportService->getImport($form, $formImport);
 
-        return $this->success('Form import retrieved successfully.', [
+        return $this->apiSuccess('Form import retrieved successfully.', [
             'form_import' => $this->formatImportResponse($formImport),
         ]);
     }
@@ -57,14 +57,14 @@ class FormImportController extends Controller
         try {
             $preview = $this->formImportService->getPreview($form, $formImport);
         } catch (ValidationException $exception) {
-            return $this->error(
+            return $this->apiError(
                 'Import preview is not available.',
                 422,
                 ['errors' => $exception->errors()],
             );
         }
 
-        return $this->success('Import preview retrieved successfully.', [
+        return $this->apiSuccess('Import preview retrieved successfully.', [
             'form_import' => $this->formatImportResponse($preview['form_import']),
             'preview' => $preview['preview'],
         ]);
@@ -77,14 +77,14 @@ class FormImportController extends Controller
         try {
             $form = $this->formImportService->commit($form, $formImport);
         } catch (ValidationException $exception) {
-            return $this->error(
+            return $this->apiError(
                 'Form import cannot be committed.',
                 422,
                 ['errors' => $exception->errors()],
             );
         }
 
-        return $this->success('Form import committed successfully.', $form);
+        return $this->apiSuccess('Form import committed successfully.', $form);
     }
 
     /**
@@ -93,31 +93,5 @@ class FormImportController extends Controller
     private function formatImportResponse(FormImport $formImport): array
     {
         return (new FormImportResource($formImport))->resolve();
-    }
-
-    private function success(string $message, mixed $data = null, int $status = 200): JsonResponse
-    {
-        return response()->json([
-            'success' => true,
-            'message' => $message,
-            'data' => $data,
-        ], $status);
-    }
-
-    /**
-     * @param  array<string, mixed>|null  $data
-     */
-    private function error(string $message, int $status, ?array $data = null): JsonResponse
-    {
-        $payload = [
-            'success' => false,
-            'message' => $message,
-        ];
-
-        if ($data !== null) {
-            $payload['data'] = $data;
-        }
-
-        return response()->json($payload, $status);
     }
 }

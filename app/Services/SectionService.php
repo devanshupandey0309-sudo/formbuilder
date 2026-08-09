@@ -28,8 +28,10 @@ class SectionService
         });
     }
 
-    public function updateSection(Section $section, array $data): Section
+    public function updateSection(Form $form, Section $section, array $data): Section
     {
+        $this->assertSectionBelongsToForm($section, $form);
+
         $section->update([
             'title' => $data['title'] ?? $section->title,
             'description' => array_key_exists('description', $data)
@@ -45,8 +47,10 @@ class SectionService
         return $section->fresh();
     }
 
-    public function deleteSection(Section $section): void
+    public function deleteSection(Form $form, Section $section): void
     {
+        $this->assertSectionBelongsToForm($section, $form);
+
         DB::transaction(function () use ($section) {
             $form = $section->form;
             $section->delete();
@@ -97,6 +101,15 @@ class SectionService
         if ($matchingCount !== count($sectionIds)) {
             throw ValidationException::withMessages([
                 'section_ids' => ['One or more sections do not belong to this form.'],
+            ]);
+        }
+    }
+
+    private function assertSectionBelongsToForm(Section $section, Form $form): void
+    {
+        if ($section->form_id !== $form->id) {
+            throw ValidationException::withMessages([
+                'section' => ['This section does not belong to the specified form.'],
             ]);
         }
     }

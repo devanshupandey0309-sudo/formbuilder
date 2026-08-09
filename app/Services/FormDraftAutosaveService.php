@@ -144,7 +144,7 @@ class FormDraftAutosaveService
             $type = $field->type;
         }
 
-        return $this->fieldService->updateField($field, [
+        return $this->fieldService->updateField($form, $field, [
             'label' => $label,
             'key' => $key,
             'type' => $type,
@@ -254,19 +254,8 @@ class FormDraftAutosaveService
      */
     private function buildValidationPayload(array $editor, string $type): ?array
     {
-        if ($type !== 'number') {
-            return null;
-        }
-
-        $validation = [];
-
-        if ($editor['validation_min'] !== '' && $editor['validation_min'] !== null) {
-            $validation['min'] = $editor['validation_min'];
-        }
-
-        if ($editor['validation_max'] !== '' && $editor['validation_max'] !== null) {
-            $validation['max'] = $editor['validation_max'];
-        }
+        $editor['type'] = $type;
+        $validation = FieldValidationRules::validationFromEditor($editor);
 
         return $validation === [] ? null : $validation;
     }

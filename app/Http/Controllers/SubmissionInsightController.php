@@ -12,10 +12,9 @@ class SubmissionInsightController extends Controller
     {
         $this->authorize('view', $form);
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Submission insights retrieved successfully.',
-            'data' => $submissionInsightService->getInsights($form),
-        ]);
+        return $this->apiSuccess(
+            'Submission insights retrieved successfully.',
+            $submissionInsightService->getInsights($form),
+        );
     }
 }

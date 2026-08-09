@@ -4,7 +4,6 @@ namespace App\Services;
 
 use App\Models\AIJob;
 use App\Models\Form;
-use App\Services\FormStructureApplyService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -20,9 +19,15 @@ class AIFormApplyService
             abort(404);
         }
 
-        if ($aiJob->status !== 'completed') {
+        if ($aiJob->status !== AIJob::STATUS_COMPLETED) {
             throw ValidationException::withMessages([
                 'ai_job' => ['Only completed AI jobs can be applied.'],
+            ]);
+        }
+
+        if ($aiJob->wasApplied()) {
+            throw ValidationException::withMessages([
+                'ai_job' => ['This AI job has already been applied.'],
             ]);
         }
 
@@ -35,6 +40,14 @@ class AIFormApplyService
         /** @var array<string, mixed> $output */
         $output = $aiJob->validated_output;
 
-        return $this->structureApplyService->apply($form, $output);
+        return DB::transaction(function () use ($form, $aiJob, $output) {
+            $form = $this->structureApplyService->apply($form, $output);
+
+            $aiJob->update([
+                'applied_at' => now(),
+            ]);
+
+            return $form;
+        });
     }
 }

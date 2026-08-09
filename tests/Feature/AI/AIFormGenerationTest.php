@@ -382,24 +382,13 @@ class AIFormGenerationTest extends TestCase
         $form = Form::factory()->for($user)->create();
         $job = $this->createPendingJob($user, $form);
 
-        $jobInstance = new GenerateAIFormJob($job->id);
-
-        try {
-            $jobInstance->handle(app(\App\Services\AIFormGenerationService::class));
-        } catch (\App\Exceptions\AI\TransientAIServiceException) {
-        }
-
-        try {
-            $jobInstance->handle(app(\App\Services\AIFormGenerationService::class));
-        } catch (\App\Exceptions\AI\TransientAIServiceException) {
-        }
-
-        $jobInstance->failed(new RuntimeException('Provider unavailable'));
+        (new GenerateAIFormJob($job->id))->handle(app(\App\Services\AIFormGenerationService::class));
 
         $job->refresh();
 
         $this->assertSame('failed', $job->status);
-        $this->assertSame('AI form generation failed.', $job->error_message);
+        $this->assertSame('Provider unavailable', $job->error_message);
+        $this->assertSame(1, $job->attempt_count);
     }
 
     public function test_failed_generation_does_not_persist_form_structure(): void
